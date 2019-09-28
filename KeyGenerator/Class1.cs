@@ -3,7 +3,7 @@
 namespace KeyGenerator
 {
     public class Class1
-    {
+    {   
         
     }
 }
