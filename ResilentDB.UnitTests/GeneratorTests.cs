@@ -31,36 +31,44 @@ namespace ResilentDB.UnitTests
         [InlineData(8, 5000)]
         [InlineData(12, 5000)]
         [InlineData(16, 5000)]
+        [InlineData(20, 5000)]
         public void Thread_Safe_Different_Keys(int amountOfThreads, int amountOfKeys)
         {
-            var treads = new Thread[amountOfThreads];
+            //Arrange            
             ulong[][] keyResults = new ulong[amountOfThreads][];
-            
-            for (int i = 0; i < amountOfThreads; i++)
-            {
-                int j = i;
-                treads[i] = new Thread(() => GenerateKeys(amountOfKeys, ref keyResults[j]));
-            }
+            var threads = InitilizeThreads(amountOfThreads, amountOfKeys, keyResults);
 
-            foreach (var thread in treads)
-            {
-                thread.Start();                
-            }        
+            //Act
+            ExecuteThreads(threads);
+
+            //Assert                
+            //Every element on every list are distintct inside the same list.
+            Assert.True(keyResults.All(result => result.Distinct().Count() == result.Count()));
+
+            //Every element is distinct on a list containing all the elements.
+            Assert.True(keyResults.SelectMany(result => result).All(new HashSet<ulong>().Add));
+        }
+
+        private void ExecuteThreads(Thread[] threads)
+        {
+            foreach (var thread in threads)
+                thread.Start();
 
             Thread.Sleep(1000);
 
-            foreach (var thread in treads)
+            foreach (var thread in threads)
+                thread.Join();
+        }
+
+        private Thread[] InitilizeThreads(int amountOfThreads, int amountOfKeys, ulong[][] keyResults)
+        {
+            var threads = new Thread[amountOfThreads];
+            for (int i = 0; i < amountOfThreads; i++)
             {
-                thread.Join();                
+                int j = i;
+                threads[i] = new Thread(() => GenerateKeys(amountOfKeys, ref keyResults[j]));
             }
-                
-            Assert.True(keyResults.All(result => result.All(new HashSet<ulong>().Add)));
-            var list = new List<ulong>();
-            foreach (var result in keyResults)
-            {
-                list.AddRange(result);   
-            }            
-            Assert.True(list.All(new HashSet<ulong>().Add));
+            return threads;
         }
 
         private static void GenerateKeys(int amountOfKeys, ref ulong[] keyResult)
