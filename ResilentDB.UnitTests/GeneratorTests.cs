@@ -1,8 +1,11 @@
+using System.Reflection;
+using System.Threading.Tasks;
 using System.Threading;
-using System.Security.AccessControl;
 using System;
 using System.Collections.Generic;
 using Xunit;
+using AutoFixture.Xunit2;
+using AutoFixture;
 using KeyGenerator;
 using System.Linq;
 
@@ -10,6 +13,12 @@ namespace ResilentDB.UnitTests
 {
     public class GeneratorTests
     {
+        readonly IFixture Fixture;
+        public GeneratorTests()
+        {
+            Fixture = new Fixture();
+        }
+
         [Theory]
         [InlineData(2)]
         [InlineData(1000)]
@@ -19,7 +28,7 @@ namespace ResilentDB.UnitTests
             ulong[] keys = new ulong[amountOfKeys];
             for (int i = 0; i < amountOfKeys; i++)
             {
-                keys[i] = Generator.GetKey();
+                keys[i] = Generator.GetInstance().GetKey();
             }
 
             Assert.True(keys.All(new HashSet<ulong>().Add));
@@ -36,10 +45,7 @@ namespace ResilentDB.UnitTests
         {
             //Arrange            
             ulong[][] keyResults = new ulong[amountOfThreads][];
-            var threads = InitilizeThreads(amountOfThreads, amountOfKeys, keyResults);
-
-            //Act
-            ExecuteThreads(threads);
+            Parallel.For(0, amountOfThreads, i => GenerateKeys(amountOfKeys, ref keyResults[i]));
 
             //Assert                
             //Every element on every list are distintct inside the same list.

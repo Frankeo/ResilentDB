@@ -5,6 +5,7 @@ namespace KeyGenerator
         public const int TOTAL_BITS = 64;
         public const int EPOCH_BITS = 41;
         public const int NODE_ID_BITS = 10;
+        public const int INT_KEY_BITS = 33;
         public const int SEQUENCE_BITS = 12;
         public const int MAX_NODE_ID = 1023;
         public const int MAX_SEQUENCE = 4095;
