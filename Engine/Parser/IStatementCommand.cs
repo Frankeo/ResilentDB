@@ -1,6 +1,6 @@
 using Engine;
 
-namespace Engine.Statements;
+namespace Engine.Parsing;
 
 public interface IStatementCommand
 {

@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
 using Engine;
 
-namespace Engine.Statements;
+namespace Engine.Parsing;
 
 public sealed class InsertStatementCommand : StatementCommandBase
 {
