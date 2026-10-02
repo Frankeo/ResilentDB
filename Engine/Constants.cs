@@ -3,7 +3,7 @@ namespace Engine
 	public static class Constants
 	{
 		internal const string FileMagic = "ResilentDB";
-		internal const int FileMagicReadLength = 4;
+		internal const int FileMagicReadLength = 10;
 		internal const int FileVersion = 1;
 		internal const int InitialTableCount = 0;
 		internal const int TruncatedFileLength = 0;
