@@ -21,7 +21,7 @@ namespace Engine
                     return command.Parse(s);
             }
 
-            throw new NotSupportedException("Comando no soportado");
+            throw new NotSupportedException(Constants.UnsupportedCommandError);
         }
 
         public static IReadOnlyList<Statement> ParseStatements(string sql)

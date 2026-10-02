@@ -17,7 +17,7 @@ public sealed class InsertStatementCommand : StatementCommandBase
         );
 
         if (!m.Success)
-            throw new Exception("INSERT inválido");
+            throw new Exception(Constants.InvalidInsertError);
 
         var tableName = m.Groups[1].Value;
         var valsStr = m.Groups[2].Value;

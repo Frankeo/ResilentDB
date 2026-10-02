@@ -17,7 +17,7 @@ public sealed class CreateTableStatementCommand : StatementCommandBase
         );
 
         if (!m.Success)
-            throw new Exception("CREATE TABLE inválido");
+            throw new Exception(Constants.InvalidCreateTableError);
 
         var tableName = m.Groups[1].Value;
         var colsStr = m.Groups[2].Value;
@@ -30,7 +30,7 @@ public sealed class CreateTableStatementCommand : StatementCommandBase
 
             var parts = p.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 2)
-                throw new Exception($"Definición de columna inválida: {p}");
+                throw new Exception(string.Format(Constants.InvalidColumnDefinitionError, p));
 
             columns.Add(new ColumnDef
             {

@@ -1,4 +1,5 @@
 using Engine;
+using Engine.BufferPool;
 using Xunit;
 
 namespace ResilentDB.UnitTests;
@@ -118,6 +119,144 @@ public sealed class EngineTests : IDisposable
         var row = Assert.Single(rows);
         Assert.Equal("1", row.Values["id"].ToString());
         Assert.Equal("Ana", row.Values["name"].ToString());
+    }
+
+    [Fact]
+    public void Pager_AllocatesAndReadsFixedSizePages()
+    {
+        using var pager = new Pager(_databasePath, pageSize: 64);
+
+        var header = pager.ReadHeader();
+        Assert.Equal("RDBP", header.Magic);
+        Assert.Equal(64, header.PageSize);
+        Assert.Equal(1, header.PageCount);
+
+        var pageId = pager.AllocatePage();
+        pager.WritePage(pageId, new byte[] { 1, 2, 3 });
+
+        var page = pager.ReadPage(pageId);
+        Assert.Equal(new byte[] { 1, 2, 3 }, page[..3]);
+        Assert.All(page[3..], value => Assert.Equal(0, value));
+        Assert.Equal(2, pager.ReadHeader().PageCount);
+        Assert.Equal(128, new FileInfo(_databasePath).Length);
+    }
+
+    [Fact]
+    public void Pager_RejectsHeaderPageAndOversizedWrites()
+    {
+        using var pager = new Pager(_databasePath, pageSize: 64);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => pager.ReadPage(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => pager.WritePage(0, Array.Empty<byte>()));
+        Assert.Throws<ArgumentException>(() => pager.WritePage(1, new byte[65]));
+    }
+
+    [Fact]
+    public void LruBufferPool_EvictsLeastRecentlyUsedAndPersistsDirtyPages()
+    {
+        int firstPageId;
+        int secondPageId;
+        int thirdPageId;
+
+        using (var store = new LruBufferPool(_databasePath, capacity: 2))
+        {
+            firstPageId = store.AllocatePage();
+            secondPageId = store.AllocatePage();
+            thirdPageId = store.AllocatePage();
+
+            store.WritePage(firstPageId, new byte[] { 1 });
+            store.WritePage(secondPageId, new byte[] { 2 });
+            Assert.Equal(1, store.ReadPage(firstPageId)[0]);
+            store.WritePage(thirdPageId, new byte[] { 3 });
+
+            Assert.Equal(2, store.CachedPageCount);
+            Assert.Equal(2, store.ReadPage(secondPageId)[0]);
+            Assert.True(store.CachedPageCount <= store.Capacity);
+            store.Flush();
+        }
+
+        using var pager = new Pager(_databasePath);
+        Assert.Equal(1, pager.ReadPage(firstPageId)[0]);
+        Assert.Equal(2, pager.ReadPage(secondPageId)[0]);
+        Assert.Equal(3, pager.ReadPage(thirdPageId)[0]);
+    }
+
+    [Fact]
+    public void FullCacheBufferPool_LoadsAllPagesAndFlushesDirtyData()
+    {
+        int pageId;
+        using (var pager = new Pager(_databasePath))
+        {
+            pageId = pager.AllocatePage();
+            pager.WritePage(pageId, new byte[] { 1 });
+        }
+
+        using (var store = new FullCacheBufferPool(_databasePath))
+        {
+            Assert.Equal(store.PageCount - 1, store.CachedPageCount);
+            Assert.Equal(1, store.ReadPage(pageId)[0]);
+            store.WritePage(pageId, new byte[] { 7 });
+            store.Flush();
+        }
+
+        using var reloadedPager = new Pager(_databasePath);
+        Assert.Equal(7, reloadedPager.ReadPage(pageId)[0]);
+    }
+
+    [Fact]
+    public void ClockBufferPool_GivesSecondChanceAndPersistsDirtyEvictions()
+    {
+        int firstPageId;
+        int secondPageId;
+        int thirdPageId;
+        using (var pager = new Pager(_databasePath))
+        {
+            firstPageId = pager.AllocatePage();
+            secondPageId = pager.AllocatePage();
+            thirdPageId = pager.AllocatePage();
+            pager.WritePage(firstPageId, new byte[] { 1 });
+            pager.WritePage(secondPageId, new byte[] { 2 });
+            pager.WritePage(thirdPageId, new byte[] { 3 });
+        }
+
+        using (var bufferPool = new ClockBufferPool(_databasePath, capacity: 2))
+        {
+            Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
+            Assert.Equal(2, bufferPool.ReadPage(secondPageId)[0]);
+            Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
+            Assert.Equal(3, bufferPool.ReadPage(thirdPageId)[0]);
+
+            bufferPool.WritePage(secondPageId, new byte[] { 22 });
+            Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
+            Assert.True(bufferPool.CachedPageCount <= bufferPool.Capacity);
+            bufferPool.Flush();
+        }
+
+        using var verifyPager = new Pager(_databasePath);
+        Assert.Equal(1, verifyPager.ReadPage(firstPageId)[0]);
+        Assert.Equal(22, verifyPager.ReadPage(secondPageId)[0]);
+        Assert.Equal(3, verifyPager.ReadPage(thirdPageId)[0]);
+    }
+
+    [Fact]
+    public void Storage_ReloadsDataSpanningMultiplePages()
+    {
+        var engine = new DbEngine(_databasePath);
+        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER, body TEXT)"));
+        var expectedBody = new string('x', Constants.DefaultPageSize * 3);
+        engine.Execute(new InsertStatement
+        {
+            TableName = "documents",
+            Values = new List<object> { 1, expectedBody }
+        });
+
+        var reloadedEngine = new DbEngine(_databasePath);
+        var rows = Assert.IsType<List<Row>>(
+            reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
+
+        var row = Assert.Single(rows);
+        Assert.Equal(expectedBody, row.Values["body"].ToString());
+        Assert.True(new FileInfo(_databasePath).Length > Constants.DefaultPageSize * 3);
     }
 
     public void Dispose()

@@ -18,6 +18,22 @@ while (true)
 
     try
     {
+        if (line.Equals(Constants.CliReadCommand, StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith(Constants.CliReadCommand + " ", StringComparison.OrdinalIgnoreCase))
+        {
+            var sqlFilePath = line[Constants.CliReadCommand.Length..].Trim();
+            if (sqlFilePath.Length == 0)
+                throw new ArgumentException(Constants.CliReadUsageError);
+
+            if ((sqlFilePath.StartsWith('"') && sqlFilePath.EndsWith('"')) ||
+                (sqlFilePath.StartsWith('\'') && sqlFilePath.EndsWith('\'')))
+            {
+                sqlFilePath = sqlFilePath[1..^1];
+            }
+
+            line = File.ReadAllText(sqlFilePath);
+        }
+
         foreach (var res in engine.Execute(line))
         {
             if (res is List<Row> rows)

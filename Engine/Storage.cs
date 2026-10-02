@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
 
@@ -15,53 +16,44 @@ namespace Engine
 
         public bool Exists => File.Exists(_filePath);
 
-        public void CreateFile()
-        {
-            using var fs = File.Create(_filePath);
-            using var bw = new BinaryWriter(fs);
-
-            // Magia
-            bw.Write(Encoding.ASCII.GetBytes(Constants.FileMagic));
-            // Versión 1
-            bw.Write(Constants.FileVersion);
-
-            // Schema vacío
-            var schema = new Schema();
-            WriteJson(bw, schema);
-
-            // 0 tablas inicialmente
-            bw.Write(Constants.InitialTableCount);
-        }
+        public void CreateFile() => Save(new Schema(), new Dictionary<string, List<Row>>());
 
         public (Schema schema, Dictionary<string, List<Row>> tables) Load()
         {
-            using var fs = File.OpenRead(_filePath);
-            using var br = new BinaryReader(fs);
+            using var pager = new Pager(_filePath);
+            var header = pager.ReadHeader();
+            if (header.PageCount < 2)
+                throw new InvalidDataException(Constants.InvalidFileError);
 
-            var magic = br.ReadBytes(Constants.FileMagicReadLength);
-            if (Encoding.ASCII.GetString(magic) != Constants.FileMagic)
-                throw new Exception(Constants.InvalidFileError);
+            using var pageData = new MemoryStream();
+            for (var pageId = 1; pageId < header.PageCount; pageId++)
+                pageData.Write(pager.ReadPage(pageId));
 
-            var version = br.ReadInt32();
+            var storedData = pageData.ToArray();
+            if (storedData.Length < sizeof(int))
+                throw new InvalidDataException(Constants.InvalidFileError);
 
-            var schema = ReadJson<Schema>(br);
+            var payloadLength = BinaryPrimitives.ReadInt32LittleEndian(storedData.AsSpan(0, sizeof(int)));
+            if (payloadLength < 0 || payloadLength > storedData.Length - sizeof(int))
+                throw new InvalidDataException(Constants.InvalidFileError);
 
-            var tableCount = br.ReadInt32();
+            using var payload = new MemoryStream(storedData, sizeof(int), payloadLength, writable: false);
+            using var reader = new BinaryReader(payload, Encoding.UTF8);
+
+            var schema = ReadJson<Schema>(reader);
+            var tableCount = reader.ReadInt32();
             var tables = new Dictionary<string, List<Row>>();
 
-            for (int i = 0; i < tableCount; i++)
+            for (var i = 0; i < tableCount; i++)
             {
-                var nameLen = br.ReadInt32();
-                var name = Encoding.UTF8.GetString(br.ReadBytes(nameLen));
+                var nameLength = reader.ReadInt32();
+                var name = Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
 
-                var rowCount = br.ReadInt32();
+                var rowCount = reader.ReadInt32();
                 var rows = new List<Row>();
 
-                for (int j = 0; j < rowCount; j++)
-                {
-                    var row = ReadJson<Row>(br);
-                    rows.Add(row);
-                }
+                for (var j = 0; j < rowCount; j++)
+                    rows.Add(ReadJson<Row>(reader));
 
                 tables[name] = rows;
             }
@@ -71,30 +63,52 @@ namespace Engine
 
         public void Save(Schema schema, Dictionary<string, List<Row>> tables)
         {
-            using var fs = File.OpenWrite(_filePath);
-            fs.SetLength(Constants.TruncatedFileLength); // truncar
-            using var bw = new BinaryWriter(fs);
-
-            bw.Write(Encoding.ASCII.GetBytes(Constants.FileMagic));
-            bw.Write(Constants.FileVersion); // versión
-
-            WriteJson(bw, schema);
-
-            bw.Write(tables.Count);
-            foreach (var kvp in tables)
+            byte[] payload;
+            using (var payloadStream = new MemoryStream())
             {
-                var name = kvp.Key;
-                var rows = kvp.Value;
-
-                var nameBytes = Encoding.UTF8.GetBytes(name);
-                bw.Write(nameBytes.Length);
-                bw.Write(nameBytes);
-
-                bw.Write(rows.Count);
-                foreach (var row in rows)
+                using (var writer = new BinaryWriter(payloadStream, Encoding.UTF8, leaveOpen: true))
                 {
-                    WriteJson(bw, row);
+                    WriteJson(writer, schema);
+                    writer.Write(tables.Count);
+
+                    foreach (var (name, rows) in tables)
+                    {
+                        var nameBytes = Encoding.UTF8.GetBytes(name);
+                        writer.Write(nameBytes.Length);
+                        writer.Write(nameBytes);
+                        writer.Write(rows.Count);
+
+                        foreach (var row in rows)
+                            WriteJson(writer, row);
+                    }
                 }
+
+                payload = payloadStream.ToArray();
+            }
+
+            var storedData = new byte[sizeof(int) + payload.Length];
+            BinaryPrimitives.WriteInt32LittleEndian(storedData.AsSpan(0, sizeof(int)), payload.Length);
+            payload.CopyTo(storedData, sizeof(int));
+
+            var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                using (var pager = new Pager(temporaryPath))
+                {
+                    for (var offset = 0; offset < storedData.Length; offset += pager.PageSize)
+                    {
+                        var pageId = pager.AllocatePage();
+                        var length = Math.Min(pager.PageSize, storedData.Length - offset);
+                        pager.WritePage(pageId, storedData.AsSpan(offset, length).ToArray());
+                    }
+                }
+
+                File.Move(temporaryPath, _filePath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
             }
         }
 

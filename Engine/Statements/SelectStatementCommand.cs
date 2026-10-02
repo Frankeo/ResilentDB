@@ -17,7 +17,7 @@ public sealed class SelectStatementCommand : StatementCommandBase
         );
 
         if (!m.Success)
-            throw new Exception("SELECT inválido");
+            throw new Exception(Constants.InvalidSelectError);
 
         var colsStr = m.Groups[1].Value.Trim();
         var tableName = m.Groups[2].Value;
@@ -32,7 +32,7 @@ public sealed class SelectStatementCommand : StatementCommandBase
         {
             var wm = Regex.Match(whereStr, @"(\w+)\s*(=|>|<|>=|<=)\s*(.+)");
             if (!wm.Success)
-                throw new Exception("WHERE no soportado completamente");
+                    throw new Exception(Constants.UnsupportedWhereError);
 
             var col = wm.Groups[1].Value;
             var op = wm.Groups[2].Value;
