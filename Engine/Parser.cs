@@ -23,5 +23,38 @@ namespace Engine
 
             throw new NotSupportedException("Comando no soportado");
         }
+
+        public static IReadOnlyList<Statement> ParseStatements(string sql)
+        {
+            var statements = new List<Statement>();
+            var current = new System.Text.StringBuilder();
+            var inQuotes = false;
+
+            foreach (var character in sql)
+            {
+                if (character == '\'')
+                    inQuotes = !inQuotes;
+
+                if (character == ';' && !inQuotes)
+                {
+                    AddStatement(current, statements);
+                    continue;
+                }
+
+                current.Append(character);
+            }
+
+            AddStatement(current, statements);
+            return statements;
+        }
+
+        private static void AddStatement(System.Text.StringBuilder sql, ICollection<Statement> statements)
+        {
+            var statementSql = sql.ToString().Trim();
+            sql.Clear();
+
+            if (statementSql.Length > 0)
+                statements.Add(Parse(statementSql));
+        }
     }
 }

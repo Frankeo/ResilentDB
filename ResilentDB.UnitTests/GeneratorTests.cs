@@ -28,7 +28,7 @@ namespace ResilentDB.UnitTests
             ulong[] keys = new ulong[amountOfKeys];
             for (int i = 0; i < amountOfKeys; i++)
             {
-                keys[i] = Generator.GetInstance().GetKey();
+                keys[i] = Generator.GetKey();
             }
 
             Assert.True(keys.All(new HashSet<ulong>().Add));

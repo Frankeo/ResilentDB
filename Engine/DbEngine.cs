@@ -45,5 +45,12 @@ namespace Engine
 
             throw new NotSupportedException(Constants.UnsupportedCommandError);
         }
+
+        public IReadOnlyList<object> Execute(string sql)
+        {
+            return Parser.ParseStatements(sql)
+                .Select(Execute)
+                .ToList();
+        }
     }
 }

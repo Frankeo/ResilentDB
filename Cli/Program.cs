@@ -18,38 +18,38 @@ while (true)
 
     try
     {
-        var stmt = Parser.Parse(line);
-        var res = engine.Execute(stmt);
-
-        if (res is List<Row> rows)
+        foreach (var res in engine.Execute(line))
         {
-            if (rows.Count == 0)
+            if (res is List<Row> rows)
             {
-                Console.WriteLine(Constants.CliEmptyResult);
+                if (rows.Count == 0)
+                {
+                    Console.WriteLine(Constants.CliEmptyResult);
+                }
+                else
+                {
+                    // Imprimir cabecera
+                    var cols = rows[0].Values.Keys.ToList();
+                    Console.WriteLine(string.Join(Constants.CliColumnSeparator, cols));
+                    Console.WriteLine(string.Join(
+                        Constants.CliRuleSeparator,
+                        cols.Select(c => new string(Constants.CliRuleCharacter, c.Length + Constants.CliColumnPadding))));
+
+                    foreach (var row in rows)
+                    {
+                        var vals = cols.Select(c => row.Values[c].ToString() ?? Constants.CliNullValue);
+                        Console.WriteLine(string.Join(Constants.CliColumnSeparator, vals));
+                    }
+                }
+            }
+            else if (res is string msg)
+            {
+                Console.WriteLine(msg);
             }
             else
             {
-                // Imprimir cabecera
-                var cols = rows[0].Values.Keys.ToList();
-                Console.WriteLine(string.Join(Constants.CliColumnSeparator, cols));
-                Console.WriteLine(string.Join(
-                    Constants.CliRuleSeparator,
-                    cols.Select(c => new string(Constants.CliRuleCharacter, c.Length + Constants.CliColumnPadding))));
-
-                foreach (var row in rows)
-                {
-                    var vals = cols.Select(c => row.Values[c].ToString() ?? Constants.CliNullValue);
-                    Console.WriteLine(string.Join(Constants.CliColumnSeparator, vals));
-                }
+                Console.WriteLine(res);
             }
-        }
-        else if (res is string msg)
-        {
-            Console.WriteLine(msg);
-        }
-        else
-        {
-            Console.WriteLine(res);
         }
     }
     catch (Exception ex)
