@@ -1,20 +1,19 @@
 ﻿using Engine;
 
-var dbPath = "basededatos.mdb";
-var engine = new DbEngine(dbPath);
+var engine = new DbEngine(Constants.DatabaseFileName);
 
-Console.WriteLine("MiniDB v0.1 - archivo: " + dbPath);
-Console.WriteLine("Comandos: CREATE TABLE, INSERT, SELECT");
-Console.WriteLine("Escribe .exit para salir.\n");
+Console.WriteLine(Constants.StartupBanner);
+Console.WriteLine(Constants.CliCommands);
+Console.WriteLine(Constants.CliExitInstructions);
 
 while (true)
 {
-    Console.Write("mdb> ");
+    Console.Write(Constants.CliPrompt);
     var line = Console.ReadLine();
     if (line == null) break;
     line = line.Trim();
-    if (line == "") continue;
-    if (line == ".exit" || line == ".quit")
+    if (line.Length == 0) continue;
+    if (line == Constants.CliExitCommand)
         break;
 
     try
@@ -26,19 +25,21 @@ while (true)
         {
             if (rows.Count == 0)
             {
-                Console.WriteLine("(0 filas)");
+                Console.WriteLine(Constants.CliEmptyResult);
             }
             else
             {
                 // Imprimir cabecera
                 var cols = rows[0].Values.Keys.ToList();
-                Console.WriteLine(string.Join(" | ", cols));
-                Console.WriteLine(string.Join("-", cols.Select(c => new string('-', c.Length + 2))));
+                Console.WriteLine(string.Join(Constants.CliColumnSeparator, cols));
+                Console.WriteLine(string.Join(
+                    Constants.CliRuleSeparator,
+                    cols.Select(c => new string(Constants.CliRuleCharacter, c.Length + Constants.CliColumnPadding))));
 
                 foreach (var row in rows)
                 {
-                    var vals = cols.Select(c => row.Values[c].ToString() ?? "NULL");
-                    Console.WriteLine(string.Join(" | ", vals));
+                    var vals = cols.Select(c => row.Values[c].ToString() ?? Constants.CliNullValue);
+                    Console.WriteLine(string.Join(Constants.CliColumnSeparator, vals));
                 }
             }
         }
@@ -53,6 +54,6 @@ while (true)
     }
     catch (Exception ex)
     {
-        Console.WriteLine("Error: " + ex.Message);
+        Console.WriteLine(Constants.CliErrorPrefix + ex.Message);
     }
 }

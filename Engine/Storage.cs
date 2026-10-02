@@ -21,16 +21,16 @@ namespace Engine
             using var bw = new BinaryWriter(fs);
 
             // Magia
-            bw.Write(Encoding.ASCII.GetBytes("MINI"));
+            bw.Write(Encoding.ASCII.GetBytes(Constants.FileMagic));
             // Versión 1
-            bw.Write(1);
+            bw.Write(Constants.FileVersion);
 
             // Schema vacío
             var schema = new Schema();
             WriteJson(bw, schema);
 
             // 0 tablas inicialmente
-            bw.Write(0);
+            bw.Write(Constants.InitialTableCount);
         }
 
         public (Schema schema, Dictionary<string, List<Row>> tables) Load()
@@ -38,9 +38,9 @@ namespace Engine
             using var fs = File.OpenRead(_filePath);
             using var br = new BinaryReader(fs);
 
-            var magic = br.ReadBytes(4);
-            if (Encoding.ASCII.GetString(magic) != "MINI")
-                throw new Exception("Archivo no válido");
+            var magic = br.ReadBytes(Constants.FileMagicReadLength);
+            if (Encoding.ASCII.GetString(magic) != Constants.FileMagic)
+                throw new Exception(Constants.InvalidFileError);
 
             var version = br.ReadInt32();
 
@@ -72,11 +72,11 @@ namespace Engine
         public void Save(Schema schema, Dictionary<string, List<Row>> tables)
         {
             using var fs = File.OpenWrite(_filePath);
-            fs.SetLength(0); // truncar
+            fs.SetLength(Constants.TruncatedFileLength); // truncar
             using var bw = new BinaryWriter(fs);
 
-            bw.Write(Encoding.ASCII.GetBytes("MINI"));
-            bw.Write(1); // versión
+            bw.Write(Encoding.ASCII.GetBytes(Constants.FileMagic));
+            bw.Write(Constants.FileVersion); // versión
 
             WriteJson(bw, schema);
 

@@ -31,14 +31,14 @@ namespace Engine
                 CreateTableStatement ct => ExecuteCreateTable(ct),
                 InsertStatement ins => ExecuteInsert(ins),
                 SelectStatement sel => ExecuteSelect(sel),
-                _ => throw new NotSupportedException("Comando no soportado")
+                _ => throw new NotSupportedException(Constants.UnsupportedCommandError)
             };
         }
 
         private object ExecuteCreateTable(CreateTableStatement stmt)
         {
             if (_schema.Tables.ContainsKey(stmt.TableName))
-                throw new Exception($"La tabla {stmt.TableName} ya existe");
+                throw new Exception(string.Format(Constants.TableAlreadyExistsError, stmt.TableName));
 
             var tableDef = new TableDef
             {
@@ -56,11 +56,11 @@ namespace Engine
         private object ExecuteInsert(InsertStatement stmt)
         {
             if (!_schema.Tables.TryGetValue(stmt.TableName, out var tableDef))
-                throw new Exception($"La tabla {stmt.TableName} no existe");
+                throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
 
             var cols = tableDef.Columns.Select(c => c.Name).ToList();
             if (cols.Count != stmt.Values.Count)
-                throw new Exception("Número de valores incorrecto");
+                throw new Exception(Constants.IncorrectValueCountError);
 
             var row = new Row();
             for (int i = 0; i < cols.Count; i++)
@@ -70,13 +70,13 @@ namespace Engine
 
             _tables[stmt.TableName].Add(row);
             Save();
-            return "1 fila insertada";
+            return Constants.InsertSuccessMessage;
         }
 
         private object ExecuteSelect(SelectStatement stmt)
         {
             if (!_tables.TryGetValue(stmt.TableName, out var rows))
-                throw new Exception($"La tabla {stmt.TableName} no existe");
+                throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
 
             // Aplicar WHERE
             if (stmt.Where != null)
@@ -118,7 +118,7 @@ namespace Engine
                 "<" => Compare(v, w.Value) < 0,
                 ">=" => Compare(v, w.Value) >= 0,
                 "<=" => Compare(v, w.Value) <= 0,
-                _ => throw new NotSupportedException($"Operador {w.Op} no soportado")
+                _ => throw new NotSupportedException(string.Format(Constants.UnsupportedOperatorError, w.Op))
             };
         }
 
