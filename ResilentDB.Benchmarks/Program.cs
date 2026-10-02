@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using Engine.BufferPool;
 using Engine;
 
@@ -7,6 +8,7 @@ const int dataPageCount = 16384;
 const int readOperations = 20000;
 const int writeOperations = 2000;
 const int cacheCapacity = 256;
+const int repetitions = 5;
 
 if (args.Length > 0 && args[0] == "--worker")
 {
@@ -19,7 +21,7 @@ if (args.Length > 0 && args[0] == "--worker")
         int.Parse(args[5]),
         int.Parse(args[6]));
 
-    PrintResult(mode, result);
+    Console.WriteLine(JsonSerializer.Serialize(result));
     return;
 }
 
@@ -32,43 +34,42 @@ try
 {
     var seedPath = Path.Combine(temporaryDirectory, "seed.mdb");
     CreateSeedDatabase(seedPath, dataPageCount);
+    var modes = Enum.GetValues<CacheMode>();
+    var results = modes.ToDictionary(mode => mode, _ => new List<BenchmarkResult>());
 
     Console.WriteLine("Buffer pool memory benchmark");
     Console.WriteLine($"Data pages: {dataPageCount} ({dataPageCount * Constants.DefaultPageSize / 1024 / 1024} MiB)");
     Console.WriteLine($"Reads: {readOperations:N0}; writes: {writeOperations:N0}; cache capacity: {cacheCapacity} pages");
+    Console.WriteLine($"Independent process runs per mode: {repetitions}; output uses medians");
     Console.WriteLine();
 
-    foreach (var mode in Enum.GetValues<CacheMode>())
+    for (var repetition = 0; repetition < repetitions; repetition++)
     {
-        var databasePath = Path.Combine(temporaryDirectory, $"{mode}.mdb");
-        File.Copy(seedPath, databasePath);
-        var startInfo = new ProcessStartInfo("dotnet")
+        for (var modeOffset = 0; modeOffset < modes.Length; modeOffset++)
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        startInfo.ArgumentList.Add(Assembly.GetEntryAssembly()!.Location);
-        startInfo.ArgumentList.Add("--worker");
-        startInfo.ArgumentList.Add(mode.ToString());
-        startInfo.ArgumentList.Add(databasePath);
-        startInfo.ArgumentList.Add(dataPageCount.ToString());
-        startInfo.ArgumentList.Add(readOperations.ToString());
-        startInfo.ArgumentList.Add(writeOperations.ToString());
-        startInfo.ArgumentList.Add(cacheCapacity.ToString());
+            var mode = modes[(modeOffset + repetition) % modes.Length];
+            var databasePath = Path.Combine(temporaryDirectory, $"{mode}.mdb");
+            File.Copy(seedPath, databasePath, overwrite: true);
+            results[mode].Add(await RunWorkerAsync(
+                mode,
+                databasePath,
+                dataPageCount,
+                readOperations,
+                writeOperations,
+                cacheCapacity));
+        }
+    }
 
-        using var worker = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("No se pudo iniciar el proceso del benchmark");
-        var outputTask = worker.StandardOutput.ReadToEndAsync();
-        var errorTask = worker.StandardError.ReadToEndAsync();
-        await worker.WaitForExitAsync();
-        var output = await outputTask;
-        var error = await errorTask;
+    var checksums = results.Values.SelectMany(runResults => runResults)
+        .Select(result => result.Checksum)
+        .Distinct()
+        .ToArray();
+    if (checksums.Length != 1)
+        throw new InvalidOperationException("Los modos no produjeron el mismo checksum");
 
-        if (worker.ExitCode != 0)
-            throw new InvalidOperationException($"Benchmark {mode} falló: {error}");
-
-        Console.Write(output);
+    foreach (var mode in modes)
+    {
+        PrintMedianResult(mode, results[mode]);
     }
 }
 finally
@@ -101,6 +102,11 @@ static BenchmarkResult RunWorkload(
     GC.WaitForPendingFinalizers();
     GC.Collect();
 
+    using var process = Process.GetCurrentProcess();
+    process.Refresh();
+    var managedBeforeInitialization = GC.GetTotalMemory(forceFullCollection: true);
+    var workingSetBeforeInitialization = process.WorkingSet64;
+    var initializationTimer = Stopwatch.StartNew();
     using IBufferPool bufferPool = mode switch
     {
         CacheMode.Direct => new DirectBufferPool(filePath),
@@ -109,14 +115,14 @@ static BenchmarkResult RunWorkload(
         CacheMode.Clock => new ClockBufferPool(filePath, cacheCapacity),
         _ => throw new ArgumentOutOfRangeException(nameof(mode))
     };
+    initializationTimer.Stop();
 
-    using var process = Process.GetCurrentProcess();
     process.Refresh();
-    var managedStart = GC.GetTotalMemory(forceFullCollection: true);
-    var workingSetStart = process.WorkingSet64;
-    var managedPeak = managedStart;
-    var workingSetPeak = workingSetStart;
-    var stopwatch = Stopwatch.StartNew();
+    var managedAfterInitialization = GC.GetTotalMemory(forceFullCollection: false);
+    var workingSetAfterInitialization = process.WorkingSet64;
+    var managedPeak = managedAfterInitialization;
+    var workingSetPeak = workingSetAfterInitialization;
+    var workloadTimer = Stopwatch.StartNew();
     var random = new Random(42);
     long checksum = 0;
 
@@ -141,7 +147,7 @@ static BenchmarkResult RunWorkload(
 
     bufferPool.Flush();
     SampleMemory(process, ref managedPeak, ref workingSetPeak);
-    stopwatch.Stop();
+    workloadTimer.Stop();
 
     var cachedPages = bufferPool switch
     {
@@ -152,13 +158,54 @@ static BenchmarkResult RunWorkload(
     };
 
     return new BenchmarkResult(
-        stopwatch.Elapsed,
-        managedStart,
+        initializationTimer.Elapsed.TotalMilliseconds,
+        workloadTimer.Elapsed.TotalMilliseconds,
+        managedBeforeInitialization,
+        managedAfterInitialization,
         managedPeak,
-        workingSetStart,
+        workingSetBeforeInitialization,
+        workingSetAfterInitialization,
         workingSetPeak,
         cachedPages,
         checksum);
+}
+
+static async Task<BenchmarkResult> RunWorkerAsync(
+    CacheMode mode,
+    string databasePath,
+    int dataPageCount,
+    int readOperations,
+    int writeOperations,
+    int cacheCapacity)
+{
+    var startInfo = new ProcessStartInfo("dotnet")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false
+    };
+    startInfo.ArgumentList.Add(Assembly.GetEntryAssembly()!.Location);
+    startInfo.ArgumentList.Add("--worker");
+    startInfo.ArgumentList.Add(mode.ToString());
+    startInfo.ArgumentList.Add(databasePath);
+    startInfo.ArgumentList.Add(dataPageCount.ToString());
+    startInfo.ArgumentList.Add(readOperations.ToString());
+    startInfo.ArgumentList.Add(writeOperations.ToString());
+    startInfo.ArgumentList.Add(cacheCapacity.ToString());
+
+    using var worker = Process.Start(startInfo)
+        ?? throw new InvalidOperationException("No se pudo iniciar el proceso del benchmark");
+    var outputTask = worker.StandardOutput.ReadToEndAsync();
+    var errorTask = worker.StandardError.ReadToEndAsync();
+    await worker.WaitForExitAsync();
+    var output = await outputTask;
+    var error = await errorTask;
+
+    if (worker.ExitCode != 0)
+        throw new InvalidOperationException($"Benchmark {mode} falló: {error}");
+
+    return JsonSerializer.Deserialize<BenchmarkResult>(output)
+        ?? throw new InvalidOperationException($"Benchmark {mode} no devolvió resultados");
 }
 
 static int ChoosePage(Random random, int dataPageCount) =>
@@ -173,16 +220,33 @@ static void SampleMemory(Process process, ref long managedPeak, ref long working
     workingSetPeak = Math.Max(workingSetPeak, process.WorkingSet64);
 }
 
-static double ToMiB(long bytes) => bytes / (1024d * 1024d);
-
-static void PrintResult(CacheMode mode, BenchmarkResult result)
+static void PrintMedianResult(CacheMode mode, List<BenchmarkResult> results)
 {
-    Console.WriteLine($"{mode,-10} elapsed {result.Elapsed.TotalMilliseconds,9:N0} ms | " +
-        $"managed start {ToMiB(result.ManagedStart),7:N2} MiB | " +
-        $"managed peak {ToMiB(result.ManagedPeak),7:N2} MiB | " +
-        $"working set start {ToMiB(result.WorkingSetStart),7:N2} MiB | " +
-        $"working set peak {ToMiB(result.WorkingSetPeak),7:N2} MiB | " +
-        $"cached pages {result.CachedPages,5:N0} | checksum {result.Checksum}");
+    var initializationMs = Median(results.Select(result => result.InitializationMilliseconds));
+    var workloadMs = Median(results.Select(result => result.WorkloadMilliseconds));
+    var managedInitializationDelta = Median(results.Select(result =>
+        (double)(result.ManagedAfterInitialization - result.ManagedBeforeInitialization)));
+    var workingSetInitializationDelta = Median(results.Select(result =>
+        (double)(result.WorkingSetAfterInitialization - result.WorkingSetBeforeInitialization)));
+    var workingSetPeak = Median(results.Select(result => (double)result.WorkingSetPeak));
+    var cachedPages = Median(results.Select(result => (double)result.CachedPages));
+
+    Console.WriteLine($"{mode,-10} init median {initializationMs,8:N1} ms | " +
+        $"workload median {workloadMs,8:N1} ms | " +
+        $"init heap delta {ToMiB(managedInitializationDelta),7:N2} MiB | " +
+        $"init RSS delta {ToMiB(workingSetInitializationDelta),7:N2} MiB | " +
+        $"peak RSS median {ToMiB(workingSetPeak),7:N2} MiB | " +
+        $"cached pages {cachedPages,6:N0} | checksum {results[0].Checksum}");
+}
+static double ToMiB(double bytes) => bytes / (1024d * 1024d);
+
+static double Median(IEnumerable<double> values)
+{
+    var ordered = values.Order().ToArray();
+    var middle = ordered.Length / 2;
+    return ordered.Length % 2 == 0
+        ? (ordered[middle - 1] + ordered[middle]) / 2
+        : ordered[middle];
 }
 
 internal enum CacheMode
@@ -194,10 +258,13 @@ internal enum CacheMode
 }
 
 internal sealed record BenchmarkResult(
-    TimeSpan Elapsed,
-    long ManagedStart,
+    double InitializationMilliseconds,
+    double WorkloadMilliseconds,
+    long ManagedBeforeInitialization,
+    long ManagedAfterInitialization,
     long ManagedPeak,
-    long WorkingSetStart,
+    long WorkingSetBeforeInitialization,
+    long WorkingSetAfterInitialization,
     long WorkingSetPeak,
     int CachedPages,
     long Checksum);

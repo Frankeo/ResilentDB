@@ -160,6 +160,7 @@ public sealed class EngineTests : IDisposable
 
         using (var store = new LruBufferPool(_databasePath, capacity: 2))
         {
+            Assert.Throws<ArgumentOutOfRangeException>(() => store.ReadPage(0));
             firstPageId = store.AllocatePage();
             secondPageId = store.AllocatePage();
             thirdPageId = store.AllocatePage();
@@ -179,6 +180,30 @@ public sealed class EngineTests : IDisposable
         Assert.Equal(1, pager.ReadPage(firstPageId)[0]);
         Assert.Equal(2, pager.ReadPage(secondPageId)[0]);
         Assert.Equal(3, pager.ReadPage(thirdPageId)[0]);
+    }
+
+    [Fact]
+    public void LruBufferPool_SerializesConcurrentAllocationsAndWrites()
+    {
+        const int pageCount = 32;
+        var pageIds = new int[pageCount];
+
+        using (var bufferPool = new LruBufferPool(_databasePath, capacity: 4))
+        {
+            Parallel.For(0, pageCount, index => pageIds[index] = bufferPool.AllocatePage());
+            Assert.Equal(pageCount + 1, bufferPool.PageCount);
+            Assert.Equal(pageCount, pageIds.Distinct().Count());
+
+            Parallel.For(0, pageCount, index =>
+                bufferPool.WritePage(pageIds[index], new[] { (byte)(index + 1) }));
+
+            Assert.True(bufferPool.CachedPageCount <= bufferPool.Capacity);
+            bufferPool.Flush();
+        }
+
+        using var pager = new Pager(_databasePath);
+        for (var index = 0; index < pageCount; index++)
+            Assert.Equal(index + 1, pager.ReadPage(pageIds[index])[0]);
     }
 
     [Fact]
@@ -222,6 +247,10 @@ public sealed class EngineTests : IDisposable
         using (var bufferPool = new ClockBufferPool(_databasePath, capacity: 2))
         {
             Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
+            var detachedCopy = bufferPool.ReadPage(firstPageId);
+            detachedCopy[0] = 99;
+            Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
+
             Assert.Equal(2, bufferPool.ReadPage(secondPageId)[0]);
             Assert.Equal(1, bufferPool.ReadPage(firstPageId)[0]);
             Assert.Equal(3, bufferPool.ReadPage(thirdPageId)[0]);
@@ -236,6 +265,30 @@ public sealed class EngineTests : IDisposable
         Assert.Equal(1, verifyPager.ReadPage(firstPageId)[0]);
         Assert.Equal(22, verifyPager.ReadPage(secondPageId)[0]);
         Assert.Equal(3, verifyPager.ReadPage(thirdPageId)[0]);
+    }
+
+    [Fact]
+    public void ClockBufferPool_SerializesConcurrentPageAccess()
+    {
+        var pageIds = new int[8];
+        using (var pager = new Pager(_databasePath))
+        {
+            for (var index = 0; index < pageIds.Length; index++)
+                pageIds[index] = pager.AllocatePage();
+        }
+
+        using (var bufferPool = new ClockBufferPool(_databasePath, capacity: 3))
+        {
+            Parallel.For(0, pageIds.Length, index =>
+                bufferPool.WritePage(pageIds[index], new[] { (byte)(index + 1) }));
+
+            Assert.True(bufferPool.CachedPageCount <= bufferPool.Capacity);
+            bufferPool.Flush();
+        }
+
+        using var verifyPager = new Pager(_databasePath);
+        for (var index = 0; index < pageIds.Length; index++)
+            Assert.Equal(index + 1, verifyPager.ReadPage(pageIds[index])[0]);
     }
 
     [Fact]

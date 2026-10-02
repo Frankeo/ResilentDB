@@ -2,6 +2,9 @@ using Engine;
 
 namespace Engine.BufferPool;
 
+/// <summary>
+/// Thread-safe Clock page cache. ReadPage returns a copy; updates must use WritePage.
+/// </summary>
 public sealed class ClockBufferPool : IBufferPool
 {
     private readonly int _capacity;
@@ -59,8 +62,9 @@ public sealed class ClockBufferPool : IBufferPool
         lock (_lock)
         {
             var page = GetPage(pageId);
-            Array.Clear(page.Data);
             data.CopyTo(page.Data, 0);
+            if (data.Length < page.Data.Length)
+                Array.Clear(page.Data, data.Length, page.Data.Length - data.Length);
             page.IsDirty = true;
             page.Referenced = true;
         }

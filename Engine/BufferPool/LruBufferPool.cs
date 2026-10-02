@@ -8,6 +8,8 @@ public sealed class LruBufferPool : IBufferPool
     private readonly int _capacity;
     private readonly Dictionary<int, CacheEntry> _pages = new();
     private readonly LinkedList<int> _leastRecentlyUsed = new();
+    private readonly object _lock = new();
+    private int _pageCount;
 
     public LruBufferPool(string filePath, int capacity = 100)
     {
@@ -16,27 +18,84 @@ public sealed class LruBufferPool : IBufferPool
 
         _pager = new Pager(filePath);
         _capacity = capacity;
+        _pageCount = _pager.ReadHeader().PageCount;
     }
 
     public int PageSize => _pager.PageSize;
-    public int PageCount => _pager.ReadHeader().PageCount;
-    public int CachedPageCount => _pages.Count;
+    public int PageCount
+    {
+        get
+        {
+            lock (_lock)
+                return _pageCount;
+        }
+    }
+
+    public int CachedPageCount
+    {
+        get
+        {
+            lock (_lock)
+                return _pages.Count;
+        }
+    }
+
     public int Capacity => _capacity;
 
-    public byte[] ReadPage(int pageId) => GetPage(pageId).Data.ToArray();
+    public byte[] ReadPage(int pageId)
+    {
+        lock (_lock)
+            return GetPageLocked(pageId).Data.ToArray();
+    }
 
     public void WritePage(int pageId, byte[] data)
     {
-        ValidateWrite(pageId, data);
-        var page = GetPage(pageId);
-        Array.Clear(page.Data);
-        data.CopyTo(page.Data, 0);
-        page.IsDirty = true;
+        ArgumentNullException.ThrowIfNull(data);
+        if (data.Length > PageSize)
+            throw new ArgumentException(Constants.PageDataTooLargeError, nameof(data));
+
+        lock (_lock)
+        {
+            var page = GetPageLocked(pageId);
+            data.CopyTo(page.Data, 0);
+            if (data.Length < page.Data.Length)
+                Array.Clear(page.Data, data.Length, page.Data.Length - data.Length);
+            page.IsDirty = true;
+        }
     }
 
-    public int AllocatePage() => _pager.AllocatePage();
+    public int AllocatePage()
+    {
+        lock (_lock)
+        {
+            var pageId = _pager.AllocatePage();
+            _pageCount = pageId + 1;
+            return pageId;
+        }
+    }
 
     public void Flush()
+    {
+        lock (_lock)
+            FlushLocked();
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            try
+            {
+                FlushLocked();
+            }
+            finally
+            {
+                _pager.Dispose();
+            }
+        }
+    }
+
+    private void FlushLocked()
     {
         foreach (var (pageId, page) in _pages)
         {
@@ -48,30 +107,24 @@ public sealed class LruBufferPool : IBufferPool
         }
     }
 
-    public void Dispose()
+    private CacheEntry GetPageLocked(int pageId)
     {
-        Flush();
-        _pager.Dispose();
-    }
-
-    private CacheEntry GetPage(int pageId)
-    {
-        ValidatePageId(pageId);
+        ValidatePageIdLocked(pageId);
         if (_pages.TryGetValue(pageId, out var cached))
         {
-            MarkMostRecentlyUsed(cached);
+            MarkMostRecentlyUsedLocked(cached);
             return cached;
         }
 
         if (_pages.Count == _capacity)
-            EvictLeastRecentlyUsed();
+            EvictLeastRecentlyUsedLocked();
 
         var entry = new CacheEntry(pageId, _pager.ReadPage(pageId), _leastRecentlyUsed.AddFirst(pageId));
         _pages.Add(pageId, entry);
         return entry;
     }
 
-    private void EvictLeastRecentlyUsed()
+    private void EvictLeastRecentlyUsedLocked()
     {
         var node = _leastRecentlyUsed.Last!;
         var page = _pages[node.Value];
@@ -85,24 +138,16 @@ public sealed class LruBufferPool : IBufferPool
         _leastRecentlyUsed.RemoveLast();
     }
 
-    private void MarkMostRecentlyUsed(CacheEntry page)
+    private void MarkMostRecentlyUsedLocked(CacheEntry page)
     {
         _leastRecentlyUsed.Remove(page.Node);
         _leastRecentlyUsed.AddFirst(page.Node);
     }
 
-    private void ValidatePageId(int pageId)
+    private void ValidatePageIdLocked(int pageId)
     {
-        if (pageId <= 0 || pageId >= PageCount)
+        if (pageId <= 0 || pageId >= _pageCount)
             throw new ArgumentOutOfRangeException(nameof(pageId));
-    }
-
-    private void ValidateWrite(int pageId, byte[] data)
-    {
-        ArgumentNullException.ThrowIfNull(data);
-        ValidatePageId(pageId);
-        if (data.Length > PageSize)
-            throw new ArgumentException(Constants.PageDataTooLargeError, nameof(data));
     }
 
     private sealed class CacheEntry(int pageId, byte[] data, LinkedListNode<int> node)
