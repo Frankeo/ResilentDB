@@ -3,7 +3,7 @@ using Engine;
 
 namespace Engine.Parsing;
 
-public sealed class InsertStatementCommand : StatementCommandBase
+public sealed class InsertStatementParser : StatementParserBase
 {
     public override bool CanHandle(string sql) =>
         sql.TrimStart().StartsWith("INSERT INTO", StringComparison.OrdinalIgnoreCase);

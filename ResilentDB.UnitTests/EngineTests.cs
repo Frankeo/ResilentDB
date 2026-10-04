@@ -14,7 +14,7 @@ public sealed class EngineTests : IDisposable
     public void Parse_CreateTableStatement_ReturnsTableAndColumns()
     {
         var statement = Assert.IsType<CreateTableStatement>(
-            Parser.Parse("CREATE TABLE users (id INTEGER, name TEXT)"));
+            Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
 
         Assert.Equal("users", statement.TableName);
         Assert.Collection(
@@ -30,6 +30,80 @@ public sealed class EngineTests : IDisposable
                 Assert.Equal("TEXT", column.Type);
             });
     }
+
+    [Fact]
+    public void Parse_CreateTableStatement_RequiresPrimaryKey()
+    {
+        Assert.Throws<Exception>(() =>
+            Parser.Parse("CREATE TABLE users (id INTEGER, name TEXT)"));
+    }
+
+        [Fact]
+        public void Parse_CreateTableStatement_MarksIntegerPrimaryKey()
+        {
+            var statement = Assert.IsType<CreateTableStatement>(
+                Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
+
+            Assert.True(statement.Columns[0].IsPrimaryKey);
+            Assert.False(statement.Columns[1].IsPrimaryKey);
+        }
+
+        [Fact]
+        public void Execute_UpdateAndDeleteApplyWhereAndPreservePrimaryKeyUniqueness()
+        {
+            var engine = new DbEngine(_databasePath);
+            engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"));
+            engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
+            engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
+
+            Assert.Equal(
+                "Filas actualizadas: 1",
+                engine.Execute(Parser.Parse("UPDATE users SET name = 'Carlos', age = 30 WHERE id = 1")));
+            Assert.Throws<Exception>(() =>
+                engine.Execute(Parser.Parse("UPDATE users SET id = 2 WHERE id = 1")));
+            Assert.Throws<Exception>(() =>
+                engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Duplicado', 20)")));
+
+            Assert.Equal("Filas eliminadas: 1", engine.Execute(Parser.Parse("DELETE FROM users WHERE age < 18")));
+            var rows = Assert.IsType<List<Row>>(engine.Execute(Parser.Parse("SELECT * FROM users")));
+            var row = Assert.Single(rows);
+            Assert.Equal(1, row.Values["id"]);
+            Assert.Equal("Carlos", row.Values["name"]);
+        }
+
+        [Fact]
+        public void Execute_RequiresPrimaryKeyAndPersistsItsDefinition()
+        {
+            var engine = new DbEngine(_databasePath);
+            engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
+            engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana')"));
+
+            var reloadedEngine = new DbEngine(_databasePath);
+            Assert.Throws<Exception>(() =>
+                reloadedEngine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Duplicado')")));
+        }
+
+        [Fact]
+        public void Execute_SelectDeleteAndUpdateValidateWhereBeforeScanningRows()
+        {
+            var engine = new DbEngine(_databasePath);
+            engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY)"));
+
+            Assert.Throws<Exception>(() =>
+                engine.Execute(Parser.Parse("SELECT * FROM users WHERE missing = 1")));
+            Assert.Throws<Exception>(() =>
+                engine.Execute(Parser.Parse("DELETE FROM users WHERE missing = 1")));
+            Assert.Throws<Exception>(() =>
+                engine.Execute(Parser.Parse("UPDATE users SET id = 1 WHERE missing = 1")));
+
+            var invalidOperator = new SelectStatement
+            {
+                TableName = "users",
+                Columns = new List<string> { "*" },
+                Where = new WhereClause { Column = "id", Op = "!=", Value = 1 }
+            };
+            Assert.Throws<NotSupportedException>(() => engine.Execute(invalidOperator));
+        }
 
     [Fact]
     public void Parse_InsertStatement_PreservesCommasInsideQuotedValues()
@@ -59,7 +133,7 @@ public sealed class EngineTests : IDisposable
     public void Execute_CreateInsertAndSelect_ReturnsMatchingRows()
     {
         var engine = new DbEngine(_databasePath);
-        engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)"));
+        engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
 
@@ -74,7 +148,7 @@ public sealed class EngineTests : IDisposable
     public void Execute_MultipleSemicolonSeparatedStatements_RunsAllStatementsInOrder()
     {
         var engine = new DbEngine(_databasePath);
-        const string sql = "CREATE TABLE users (id INTEGER, name TEXT); " +
+        const string sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); " +
             "INSERT INTO users VALUES (1, 'Ana'); " +
             "INSERT INTO users VALUES (2, 'Luis'); " +
             "INSERT INTO users VALUES (3, 'Sam; Smith'); " +
@@ -97,7 +171,7 @@ public sealed class EngineTests : IDisposable
     public void Execute_RejectsDuplicateTablesAndIncorrectValueCounts()
     {
         var engine = new DbEngine(_databasePath);
-        var createTable = Parser.Parse("CREATE TABLE users (id INTEGER)");
+        var createTable = Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY)");
         engine.Execute(createTable);
 
         Assert.Throws<Exception>(() => engine.Execute(createTable));
@@ -109,7 +183,7 @@ public sealed class EngineTests : IDisposable
     public void Execute_PersistsRowsForANewEngineInstance()
     {
         var engine = new DbEngine(_databasePath);
-        engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER, name TEXT)"));
+        engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana')"));
 
         var reloadedEngine = new DbEngine(_databasePath);
@@ -295,7 +369,7 @@ public sealed class EngineTests : IDisposable
     public void Storage_ReloadsDataSpanningMultiplePages()
     {
         var engine = new DbEngine(_databasePath);
-        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER, body TEXT)"));
+        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
         var expectedBody = new string('x', Constants.DefaultPageSize * 3);
         engine.Execute(new InsertStatement
         {
@@ -316,7 +390,7 @@ public sealed class EngineTests : IDisposable
     public void Storage_ReloadsDataLargerThanTheClockBufferPool()
     {
         var engine = new DbEngine(_databasePath);
-        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER, body TEXT)"));
+        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
         var expectedBody = new string('x', Constants.DefaultPageSize * (Constants.DefaultBufferPoolCapacity + 2));
         engine.Execute(new InsertStatement
         {

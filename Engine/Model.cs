@@ -5,6 +5,7 @@ namespace Engine
     {
         public string Name { get; set; } = "";
         public string Type { get; set; } = ""; // "INTEGER" o "TEXT"
+        public bool IsPrimaryKey { get; set; }
     }
 
     public class TableDef
@@ -43,6 +44,19 @@ namespace Engine
     {
         public string TableName { get; set; } = "";
         public List<string> Columns { get; set; } = new(); // ["*"] o ["id","nombre"]
+        public WhereClause? Where { get; set; }
+    }
+
+    public class DeleteStatement : Statement
+    {
+        public string TableName { get; set; } = "";
+        public WhereClause? Where { get; set; }
+    }
+
+    public class UpdateStatement : Statement
+    {
+        public string TableName { get; set; } = "";
+        public Dictionary<string, object> Assignments { get; set; } = new();
         public WhereClause? Where { get; set; }
     }
 

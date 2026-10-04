@@ -23,6 +23,20 @@ public sealed class InsertExecutor : ExecutorBase
             row.Values[cols[i]] = stmt.Values[i];
         }
 
+        var primaryKey = tableDef.Columns.SingleOrDefault(column => column.IsPrimaryKey);
+        if (primaryKey is not null)
+        {
+            if (!row.Values.TryGetValue(primaryKey.Name, out var keyValue))
+                throw new Exception(Constants.InsertMissingPrimaryKeyError);
+
+            if (keyValue is not int)
+                throw new Exception(Constants.PrimaryKeyMustBeIntegerError);
+
+            if (engine.Tables[stmt.TableName].Any(existing =>
+                    ValuesEqual(existing.Values[primaryKey.Name], keyValue)))
+                throw new Exception(Constants.DuplicatePrimaryKeyError);
+        }
+
         engine.Tables[stmt.TableName].Add(row);
         engine.Save();
         return Constants.InsertSuccessMessage;

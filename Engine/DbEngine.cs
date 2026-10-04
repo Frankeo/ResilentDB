@@ -4,13 +4,7 @@ namespace Engine
 {
     public class DbEngine
     {
-        private static readonly IExecutor[] Executors =
-        {
-            new CreateTableExecutor(),
-            new InsertExecutor(),
-            new SelectExecutor()
-        };
-
+        private readonly ExecutionDispatcher _executionDispatcher = new();
         private readonly Storage _storage;
         private Schema _schema;
         private Dictionary<string, List<Row>> _tables;
@@ -35,16 +29,7 @@ namespace Engine
             _storage.Save(_schema, _tables);
         }
 
-        public object Execute(Statement stmt)
-        {
-            foreach (var executor in Executors)
-            {
-                if (executor.CanExecute(stmt))
-                    return executor.Execute(this, stmt);
-            }
-
-            throw new NotSupportedException(Constants.UnsupportedCommandError);
-        }
+        public object Execute(Statement stmt) => _executionDispatcher.Execute(this, stmt);
 
         public IReadOnlyList<object> Execute(string sql)
         {

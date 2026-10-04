@@ -3,7 +3,7 @@ using Engine;
 
 namespace Engine.Parsing;
 
-public sealed class SelectStatementCommand : StatementCommandBase
+public sealed class SelectStatementParser : StatementParserBase
 {
     public override bool CanHandle(string sql) =>
         sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase);
@@ -25,26 +25,11 @@ public sealed class SelectStatementCommand : StatementCommandBase
 
         var columns = colsStr == "*"
             ? new List<string> { "*" }
-            : colsStr.Split(',').Select(c => c.Trim()).ToList();
+            : colsStr.Split(Constants.SqlValueSeparator).Select(c => c.Trim()).ToList();
 
         WhereClause? where = null;
         if (whereStr != null)
-        {
-            var wm = Regex.Match(whereStr, @"(\w+)\s*(=|>|<|>=|<=)\s*(.+)");
-            if (!wm.Success)
-                    throw new Exception(Constants.UnsupportedWhereError);
-
-            var col = wm.Groups[1].Value;
-            var op = wm.Groups[2].Value;
-            var valStr = wm.Groups[3].Value.Trim();
-
-            where = new WhereClause
-            {
-                Column = col,
-                Op = op,
-                Value = ParseValue(valStr)
-            };
-        }
+            where = ParseWhereClause(whereStr);
 
         return new SelectStatement
         {

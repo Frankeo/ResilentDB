@@ -2,7 +2,7 @@ using Engine;
 
 namespace Engine.Parsing;
 
-public interface IStatementCommand
+public interface IStatementParser
 {
     bool CanHandle(string sql);
     Statement Parse(string sql);

@@ -10,12 +10,17 @@ public sealed class SelectExecutor : ExecutorBase
     {
         var stmt = (SelectStatement)statement;
 
+        if (!engine.Schema.Tables.TryGetValue(stmt.TableName, out var table))
+            throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
+
+        ValidateWhereClause(table, stmt.Where);
+
         if (!engine.Tables.TryGetValue(stmt.TableName, out var rows))
             throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
 
         if (stmt.Where != null)
         {
-            rows = rows.Where(r => CumpleWhere(r, stmt.Where)).ToList();
+            rows = rows.Where(r => MatchesWhere(r, stmt.Where)).ToList();
         }
 
         if (stmt.Columns.Count == 1 && stmt.Columns[0] == "*")
@@ -34,31 +39,5 @@ public sealed class SelectExecutor : ExecutorBase
                 return newRow;
             })
             .ToList();
-    }
-
-    private static bool CumpleWhere(Row row, WhereClause w)
-    {
-        if (!row.Values.TryGetValue(w.Column, out var v))
-            return false;
-
-        return w.Op switch
-        {
-            "=" => Equals(v, w.Value),
-            ">" => Compare(v, w.Value) > 0,
-            "<" => Compare(v, w.Value) < 0,
-            ">=" => Compare(v, w.Value) >= 0,
-            "<=" => Compare(v, w.Value) <= 0,
-            _ => throw new NotSupportedException(string.Format(Constants.UnsupportedOperatorError, w.Op))
-        };
-    }
-
-    private static int Compare(object a, object b)
-    {
-        if (a is int ai && b is int bi)
-            return ai.CompareTo(bi);
-
-        var sa = a?.ToString() ?? "";
-        var sb = b?.ToString() ?? "";
-        return string.Compare(sa, sb, StringComparison.Ordinal);
     }
 }

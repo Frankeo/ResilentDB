@@ -4,21 +4,23 @@ namespace Engine
 {
     public static class Parser
     {
-        private static readonly IStatementCommand[] StatementCommands =
+        private static readonly IStatementParser[] StatementParsers =
         {
-            new CreateTableStatementCommand(),
-            new InsertStatementCommand(),
-            new SelectStatementCommand()
+            new CreateTableStatementParser(),
+            new InsertStatementParser(),
+            new SelectStatementParser(),
+            new DeleteStatementParser(),
+            new UpdateStatementParser()
         };
 
         public static Statement Parse(string sql)
         {
             var s = sql.Trim();
 
-            foreach (var command in StatementCommands)
+            foreach (var parser in StatementParsers)
             {
-                if (command.CanHandle(s))
-                    return command.Parse(s);
+                if (parser.CanHandle(s))
+                    return parser.Parse(s);
             }
 
             throw new NotSupportedException(Constants.UnsupportedCommandError);
@@ -32,10 +34,10 @@ namespace Engine
 
             foreach (var character in sql)
             {
-                if (character == '\'')
+                if (character == Constants.SqlStringDelimiter)
                     inQuotes = !inQuotes;
 
-                if (character == ';' && !inQuotes)
+                if (character == Constants.SqlStatementTerminator && !inQuotes)
                 {
                     AddStatement(current, statements);
                     continue;

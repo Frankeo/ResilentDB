@@ -23,6 +23,6 @@ public sealed class CreateTableExecutor : ExecutorBase
         engine.Tables[stmt.TableName] = new List<Row>();
 
         engine.Save();
-        return "Tabla creada";
+        return Constants.TableCreatedMessage;
     }
 }
