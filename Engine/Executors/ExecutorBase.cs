@@ -21,6 +21,86 @@ public abstract class ExecutorBase : IExecutor
                 string.Format(Constants.UnsupportedOperatorError, where.Op));
     }
 
+    protected static List<Row> FindMatchingRows(
+        DbEngine engine,
+        string tableName,
+        TableDef table,
+        WhereClause? where)
+    {
+        var index = engine.OpenPrimaryIndex(tableName);
+        if (where is null)
+            return index.ScanRecords().Select(entry => entry.Value).ToList();
+
+        var primaryKey = table.Columns.SingleOrDefault(column => column.IsPrimaryKey);
+        if (primaryKey is not null &&
+            string.Equals(where.Column, primaryKey.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!TryConvertPrimaryKey(where.Value, out var key))
+                return new List<Row>();
+
+            if (where.Op == "=")
+            {
+                return index.TryGetRecord(key, out var row) && row is not null
+                    ? new List<Row> { row }
+                    : new List<Row>();
+            }
+
+            long? minimum = null;
+            long? maximum = null;
+            switch (where.Op)
+            {
+                case ">":
+                    if (key == long.MaxValue)
+                        return new List<Row>();
+                    minimum = key + 1;
+                    break;
+                case ">=":
+                    minimum = key;
+                    break;
+                case "<":
+                    if (key == long.MinValue)
+                        return new List<Row>();
+                    maximum = key - 1;
+                    break;
+                case "<=":
+                    maximum = key;
+                    break;
+            }
+
+            return index.ScanRecords(minimum, maximum)
+                .Select(entry => entry.Value)
+                .ToList();
+        }
+
+        return index.ScanRecords()
+            .Select(entry => entry.Value)
+            .Where(row => MatchesWhere(row, where))
+            .ToList();
+    }
+
+    protected static bool TryConvertPrimaryKey(object value, out long key)
+    {
+        if (value is JsonElement json && json.ValueKind == JsonValueKind.Number)
+            return json.TryGetInt64(out key);
+
+        if (value is string or bool or char)
+        {
+            key = default;
+            return false;
+        }
+
+        try
+        {
+            key = Convert.ToInt64(value);
+            return true;
+        }
+        catch (Exception)
+        {
+            key = default;
+            return false;
+        }
+    }
+
     protected static bool MatchesWhere(Row row, WhereClause? where)
     {
         if (where is null)

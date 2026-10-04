@@ -6,9 +6,16 @@ using Engine.BufferPool;
 namespace Engine
 {
 
-    public class Storage
+    public class Storage : IDisposable
     {
+        private static readonly byte[] CatalogMagic = Encoding.ASCII.GetBytes("RDC4");
         private readonly string _filePath;
+        private Dictionary<string, int> _primaryIndexMetadataPages = new();
+        private readonly Dictionary<string, PagedPrimaryKeyBPlusTree> _primaryIndexes =
+            new(StringComparer.OrdinalIgnoreCase);
+        private ClockBufferPool? _bufferPool;
+
+        private ClockBufferPool BufferPool => _bufferPool ??= new ClockBufferPool(_filePath);
 
         public Storage(string filePath)
         {
@@ -17,118 +24,130 @@ namespace Engine
 
         public bool Exists => File.Exists(_filePath);
 
-        public void CreateFile() => Save(new Schema(), new Dictionary<string, List<Row>>());
+        internal string FilePath => _filePath;
+        internal IReadOnlyDictionary<string, int> PrimaryIndexMetadataPages => _primaryIndexMetadataPages;
 
-        public (Schema schema, Dictionary<string, List<Row>> tables) Load()
+        public void CreateFile()
         {
-            using var bufferPool = new ClockBufferPool(_filePath);
-            var pageCount = bufferPool.PageCount;
-            if (pageCount < 2)
+            if (BufferPool.AllocatePage() != 1)
                 throw new InvalidDataException(Constants.InvalidFileError);
 
-            using var pageData = new MemoryStream();
-            for (var pageId = 1; pageId < pageCount; pageId++)
-                pageData.Write(bufferPool.ReadPage(pageId));
-
-            var storedData = pageData.ToArray();
-            if (storedData.Length < sizeof(int))
-                throw new InvalidDataException(Constants.InvalidFileError);
-
-            var payloadLength = BinaryPrimitives.ReadInt32LittleEndian(storedData.AsSpan(0, sizeof(int)));
-            if (payloadLength < 0 || payloadLength > storedData.Length - sizeof(int))
-                throw new InvalidDataException(Constants.InvalidFileError);
-
-            using var payload = new MemoryStream(storedData, sizeof(int), payloadLength, writable: false);
-            using var reader = new BinaryReader(payload, Encoding.UTF8);
-
-            var schema = ReadJson<Schema>(reader);
-            var tableCount = reader.ReadInt32();
-            var tables = new Dictionary<string, List<Row>>();
-
-            for (var i = 0; i < tableCount; i++)
-            {
-                var nameLength = reader.ReadInt32();
-                var name = Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
-
-                var rowCount = reader.ReadInt32();
-                var rows = new List<Row>();
-
-                for (var j = 0; j < rowCount; j++)
-                    rows.Add(ReadJson<Row>(reader));
-
-                tables[name] = rows;
-            }
-
-            return (schema, tables);
+            WriteCatalog(new Schema());
+            BufferPool.Flush();
         }
 
-        public void Save(Schema schema, Dictionary<string, List<Row>> tables)
+        public Schema Load()
         {
-            byte[] payload;
-            using (var payloadStream = new MemoryStream())
+            if (BufferPool.PageCount < 2)
+                throw new InvalidDataException(Constants.InvalidFileError);
+
+            byte[] page = BufferPool.ReadPage(1);
+            if (!page.AsSpan(0, CatalogMagic.Length).SequenceEqual(CatalogMagic))
+                throw new InvalidDataException(Constants.InvalidFileError);
+
+            int payloadLength = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(4, sizeof(int)));
+            if (payloadLength <= 0 || payloadLength > page.Length - 8)
+                throw new InvalidDataException(Constants.InvalidFileError);
+
+            var catalog = JsonSerializer.Deserialize<StorageCatalog>(page.AsSpan(8, payloadLength))
+                ?? throw new InvalidDataException(Constants.InvalidFileError);
+            _primaryIndexMetadataPages = new Dictionary<string, int>(
+                catalog.PrimaryIndexMetadataPages,
+                StringComparer.OrdinalIgnoreCase);
+
+            int expectedIndexCount = catalog.Schema.Tables.Values.Count(table =>
+                table.Columns.Any(column => column.IsPrimaryKey));
+            if (_primaryIndexMetadataPages.Count != expectedIndexCount ||
+                _primaryIndexMetadataPages.Any(entry =>
+                    entry.Value <= 1 || entry.Value >= BufferPool.PageCount ||
+                    !catalog.Schema.Tables.TryGetValue(entry.Key, out var table) ||
+                    !table.Columns.Any(column => column.IsPrimaryKey)))
             {
-                using (var writer = new BinaryWriter(payloadStream, Encoding.UTF8, leaveOpen: true))
-                {
-                    WriteJson(writer, schema);
-                    writer.Write(tables.Count);
-
-                    foreach (var (name, rows) in tables)
-                    {
-                        var nameBytes = Encoding.UTF8.GetBytes(name);
-                        writer.Write(nameBytes.Length);
-                        writer.Write(nameBytes);
-                        writer.Write(rows.Count);
-
-                        foreach (var row in rows)
-                            WriteJson(writer, row);
-                    }
-                }
-
-                payload = payloadStream.ToArray();
+                throw new InvalidDataException(Constants.InvalidFileError);
             }
 
-            var storedData = new byte[sizeof(int) + payload.Length];
-            BinaryPrimitives.WriteInt32LittleEndian(storedData.AsSpan(0, sizeof(int)), payload.Length);
-            payload.CopyTo(storedData, sizeof(int));
+            return catalog.Schema;
+        }
 
-            var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
-            try
+        public void Save(Schema schema)
+        {
+            WriteCatalog(schema);
+            BufferPool.Flush();
+        }
+
+        internal PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName)
+        {
+            if (_primaryIndexes.TryGetValue(tableName, out var index))
+                return index;
+
+            if (!_primaryIndexMetadataPages.TryGetValue(tableName, out int metadataPageId))
+                throw new InvalidDataException(Constants.InvalidFileError);
+
+            index = PagedPrimaryKeyBPlusTree.Open(
+                BufferPool,
+                metadataPageId,
+                Constants.DefaultBPlusTreeMaxKeys);
+            _primaryIndexes.Add(tableName, index);
+            return index;
+        }
+
+        internal void ValidatePrimaryIndexes(Schema schema)
+        {
+            foreach (var (tableName, tableDefinition) in schema.Tables)
             {
-                using (var bufferPool = new ClockBufferPool(temporaryPath))
-                {
-                    for (var offset = 0; offset < storedData.Length; offset += bufferPool.PageSize)
-                    {
-                        var pageId = bufferPool.AllocatePage();
-                        var length = Math.Min(bufferPool.PageSize, storedData.Length - offset);
-                        bufferPool.WritePage(pageId, storedData.AsSpan(offset, length).ToArray());
-                    }
+                if (!tableDefinition.Columns.Any(column => column.IsPrimaryKey))
+                    throw new InvalidDataException(Constants.InvalidFileError);
 
-                    bufferPool.Flush();
-                }
-
-                File.Move(temporaryPath, _filePath, overwrite: true);
-            }
-            finally
-            {
-                if (File.Exists(temporaryPath))
-                    File.Delete(temporaryPath);
+                var index = OpenPrimaryIndex(tableName);
+                index.Validate();
             }
         }
 
-        private void WriteJson(BinaryWriter bw, object obj)
+        internal void CreatePrimaryIndex(string tableName, Schema schema)
         {
-            var json = JsonSerializer.Serialize(obj);
-            var bytes = Encoding.UTF8.GetBytes(json);
-            bw.Write(bytes.Length);
-            bw.Write(bytes);
+            if (_primaryIndexMetadataPages.ContainsKey(tableName))
+                throw new InvalidDataException(Constants.InvalidFileError);
+
+            var index = PagedPrimaryKeyBPlusTree.CreateOnBufferPool(
+                BufferPool,
+                Constants.DefaultBPlusTreeMaxKeys);
+            _primaryIndexes.Add(tableName, index);
+            _primaryIndexMetadataPages.Add(tableName, index.MetadataPageId);
+            WriteCatalog(schema);
+            BufferPool.Flush();
         }
 
-        private T ReadJson<T>(BinaryReader br)
+        public void Dispose()
         {
-            var len = br.ReadInt32();
-            var bytes = br.ReadBytes(len);
-            var json = Encoding.UTF8.GetString(bytes);
-            return JsonSerializer.Deserialize<T>(json)!;
+            foreach (var index in _primaryIndexes.Values)
+                index.Dispose();
+            _primaryIndexes.Clear();
+            _bufferPool?.Dispose();
+            _bufferPool = null;
+        }
+
+        private void WriteCatalog(Schema schema)
+        {
+            var catalog = new StorageCatalog
+            {
+                Schema = schema,
+                PrimaryIndexMetadataPages = _primaryIndexMetadataPages
+            };
+            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(catalog);
+            if (payload.Length > BufferPool.PageSize - 8)
+                throw new InvalidOperationException(Constants.InvalidFileError);
+
+            byte[] page = new byte[BufferPool.PageSize];
+            CatalogMagic.CopyTo(page, 0);
+            BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(4, sizeof(int)), payload.Length);
+            payload.CopyTo(page, 8);
+            BufferPool.WritePage(1, page);
+        }
+
+        private sealed class StorageCatalog
+        {
+            public Schema Schema { get; set; } = new();
+            public Dictionary<string, int> PrimaryIndexMetadataPages { get; set; } = new();
         }
     }
 }

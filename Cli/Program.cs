@@ -1,6 +1,6 @@
 ﻿using Engine;
 
-var engine = new DbEngine(Constants.DatabaseFileName);
+using var engine = new DbEngine(Constants.DatabaseFileName);
 
 Console.WriteLine(Constants.StartupBanner);
 Console.WriteLine(Constants.CliCommands);

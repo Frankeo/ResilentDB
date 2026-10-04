@@ -51,7 +51,7 @@ public sealed class EngineTests : IDisposable
         [Fact]
         public void Execute_UpdateAndDeleteApplyWhereAndPreservePrimaryKeyUniqueness()
         {
-            var engine = new DbEngine(_databasePath);
+            using var engine = new DbEngine(_databasePath);
             engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"));
             engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
             engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
@@ -74,19 +74,28 @@ public sealed class EngineTests : IDisposable
         [Fact]
         public void Execute_RequiresPrimaryKeyAndPersistsItsDefinition()
         {
-            var engine = new DbEngine(_databasePath);
+            using var engine = new DbEngine(_databasePath);
             engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
             engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana')"));
 
-            var reloadedEngine = new DbEngine(_databasePath);
+            engine.Dispose();
+            using var reloadedEngine = new DbEngine(_databasePath);
             Assert.Throws<Exception>(() =>
                 reloadedEngine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Duplicado')")));
         }
 
+            [Fact]
+            public void Execute_RejectsSecondEngineWhileDatabaseIsOpen()
+            {
+                using var engine = new DbEngine(_databasePath);
+
+                Assert.Throws<IOException>(() => new DbEngine(_databasePath));
+            }
+
         [Fact]
         public void Execute_SelectDeleteAndUpdateValidateWhereBeforeScanningRows()
         {
-            var engine = new DbEngine(_databasePath);
+            using var engine = new DbEngine(_databasePath);
             engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY)"));
 
             Assert.Throws<Exception>(() =>
@@ -103,6 +112,168 @@ public sealed class EngineTests : IDisposable
                 Where = new WhereClause { Column = "id", Op = "!=", Value = 1 }
             };
             Assert.Throws<NotSupportedException>(() => engine.Execute(invalidOperator));
+        }
+
+        [Fact]
+        public void PagedPrimaryKeyBPlusTree_SplitsScansDeletesAndReloads()
+        {
+            var indexPath = $"{_databasePath}.tree.idx";
+            try
+            {
+                using (var tree = new PagedPrimaryKeyBPlusTree(
+                           indexPath,
+                           maxKeys: 3,
+                           bufferPoolCapacity: 2))
+                {
+                    foreach (long key in Enumerable.Range(0, 64)
+                                 .OrderBy(value => (value * 37) % 64)
+                                 .Select(value => (long)value + 1))
+                    {
+                        tree.Insert(key, key * 10);
+                    }
+
+                    Assert.True(tree.RootPageId.Value > 2);
+                    Assert.True(tree.TryGetValue(17, out var value));
+                    Assert.Equal(170, value);
+                    Assert.Throws<InvalidOperationException>(() => tree.Insert(17, 999));
+                    Assert.Equal(new long[] { 20, 21, 22 },
+                        tree.Scan(20, 22).Select(entry => entry.Key));
+
+                    for (long key = 2; key <= 64; key += 2)
+                        Assert.True(tree.Delete(key));
+
+                    Assert.False(tree.Delete(2));
+                    tree.Validate();
+                    Assert.Equal(Enumerable.Range(1, 64).Where(key => key % 2 == 1),
+                        tree.Scan().Select(entry => (int)entry.Key));
+                }
+
+                using var reloaded = new PagedPrimaryKeyBPlusTree(
+                    indexPath,
+                    maxKeys: 3,
+                    bufferPoolCapacity: 2);
+                reloaded.Validate();
+                Assert.Equal(32, reloaded.Count);
+                Assert.True(reloaded.TryGetValue(63, out var persistedValue));
+                Assert.Equal(630, persistedValue);
+            }
+            finally
+            {
+                if (File.Exists(indexPath))
+                    File.Delete(indexPath);
+            }
+        }
+
+        [Fact]
+        public void PagedPrimaryKeyBPlusTree_StoresRowsInlineAndInOverflowPages()
+        {
+            var indexPath = $"{_databasePath}.row-tree.idx";
+            try
+            {
+                var largeBody = new string('x', Constants.DefaultPageSize * 2);
+                using (var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
+                {
+                    tree.InsertRecord(1, new Row
+                    {
+                        Values = new Dictionary<string, object>
+                        {
+                            ["id"] = 1,
+                            ["name"] = "inline"
+                        }
+                    });
+                    tree.InsertRecord(2, new Row
+                    {
+                        Values = new Dictionary<string, object>
+                        {
+                            ["id"] = 2,
+                            ["body"] = largeBody
+                        }
+                    });
+
+                    Assert.True(tree.TryGetRecord(1, out var inlineRow));
+                    Assert.Equal("inline", inlineRow!.Values["name"].ToString());
+                    Assert.True(tree.TryGetRecord(2, out var overflowRow));
+                    Assert.Equal(largeBody, overflowRow!.Values["body"].ToString());
+                    tree.Validate();
+                }
+
+                using var reloaded = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+                Assert.True(reloaded.TryGetRecord(2, out var persistedRow));
+                Assert.Equal(largeBody, persistedRow!.Values["body"].ToString());
+            }
+            finally
+            {
+                if (File.Exists(indexPath))
+                    File.Delete(indexPath);
+            }
+        }
+
+        [Fact]
+        public void PagedPrimaryKeyBPlusTree_RebalancesAndReusesFreedPages()
+        {
+            var indexPath = $"{_databasePath}.rebalance.idx";
+            try
+            {
+                using var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+                for (long key = 1; key <= 64; key++)
+                    tree.Insert(key, key);
+
+                int allocatedPageCount = tree.PageCount;
+                for (long key = 64; key >= 1; key--)
+                    Assert.True(tree.Delete(key));
+
+                tree.Validate();
+                Assert.Equal(0, tree.Count);
+                Assert.True(tree.FreePageCount > 0);
+
+                for (long key = 1; key <= 64; key++)
+                    tree.Insert(key, key);
+
+                tree.Validate();
+                Assert.Equal(64, tree.Count);
+                Assert.Equal(allocatedPageCount, tree.PageCount);
+            }
+            finally
+            {
+                if (File.Exists(indexPath))
+                    File.Delete(indexPath);
+            }
+        }
+
+        [Fact]
+        public void PagedPrimaryKeyBPlusTree_ReusesOverflowPagesAfterDelete()
+        {
+            var indexPath = $"{_databasePath}.overflow.idx";
+            try
+            {
+                var largeBody = new string('x', Constants.DefaultPageSize * 2);
+                using var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+                tree.InsertRecord(1, new Row
+                {
+                    Values = new Dictionary<string, object> { ["id"] = 1, ["body"] = largeBody }
+                });
+                Assert.Equal(0, tree.FreePageCount);
+                Assert.True(tree.TryGetRecord(1, out var insertedRow));
+                Assert.Equal(largeBody, insertedRow!.Values["body"].ToString());
+                int pageCountWithOverflow = tree.PageCount;
+                Assert.True(tree.Delete(1));
+                int freePagesAfterDelete = tree.FreePageCount;
+                Assert.True(freePagesAfterDelete >= 2);
+
+                tree.InsertRecord(2, new Row
+                {
+                    Values = new Dictionary<string, object> { ["id"] = 2, ["body"] = largeBody }
+                });
+
+                Assert.Equal(pageCountWithOverflow, tree.PageCount);
+                Assert.True(tree.FreePageCount < freePagesAfterDelete);
+                tree.Validate();
+            }
+            finally
+            {
+                if (File.Exists(indexPath))
+                    File.Delete(indexPath);
+            }
         }
 
     [Fact]
@@ -132,7 +303,7 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Execute_CreateInsertAndSelect_ReturnsMatchingRows()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
@@ -147,7 +318,7 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Execute_MultipleSemicolonSeparatedStatements_RunsAllStatementsInOrder()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         const string sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); " +
             "INSERT INTO users VALUES (1, 'Ana'); " +
             "INSERT INTO users VALUES (2, 'Luis'); " +
@@ -170,7 +341,7 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Execute_RejectsDuplicateTablesAndIncorrectValueCounts()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         var createTable = Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY)");
         engine.Execute(createTable);
 
@@ -182,11 +353,12 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Execute_PersistsRowsForANewEngineInstance()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana')"));
 
-        var reloadedEngine = new DbEngine(_databasePath);
+        engine.Dispose();
+        using var reloadedEngine = new DbEngine(_databasePath);
         var rows = Assert.IsType<List<Row>>(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM users")));
 
@@ -342,6 +514,36 @@ public sealed class EngineTests : IDisposable
     }
 
     [Fact]
+    public void ClockBufferPool_DoesNotEvictPinnedPages()
+    {
+        int firstPageId;
+        int secondPageId;
+        using (var pager = new Pager(_databasePath))
+        {
+            firstPageId = pager.AllocatePage();
+            secondPageId = pager.AllocatePage();
+            pager.WritePage(firstPageId, new byte[] { 1 });
+            pager.WritePage(secondPageId, new byte[] { 2 });
+        }
+
+        using (var bufferPool = new ClockBufferPool(_databasePath, capacity: 1))
+        {
+            byte[] pinnedPage = bufferPool.FetchPage(firstPageId);
+            Assert.Equal(1, pinnedPage[0]);
+            Assert.Throws<InvalidOperationException>(() => bufferPool.FetchPage(secondPageId));
+
+            pinnedPage[0] = 9;
+            Assert.True(bufferPool.UnpinPage(firstPageId, dirty: true));
+            Assert.Equal(2, bufferPool.ReadPage(secondPageId)[0]);
+            Assert.False(bufferPool.UnpinPage(firstPageId, dirty: false));
+            bufferPool.Flush();
+        }
+
+        using var verifyPager = new Pager(_databasePath);
+        Assert.Equal(9, verifyPager.ReadPage(firstPageId)[0]);
+    }
+
+    [Fact]
     public void ClockBufferPool_SerializesConcurrentPageAccess()
     {
         var pageIds = new int[8];
@@ -368,7 +570,7 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Storage_ReloadsDataSpanningMultiplePages()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
         var expectedBody = new string('x', Constants.DefaultPageSize * 3);
         engine.Execute(new InsertStatement
@@ -377,7 +579,8 @@ public sealed class EngineTests : IDisposable
             Values = new List<object> { 1, expectedBody }
         });
 
-        var reloadedEngine = new DbEngine(_databasePath);
+        engine.Dispose();
+        using var reloadedEngine = new DbEngine(_databasePath);
         var rows = Assert.IsType<List<Row>>(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
 
@@ -389,7 +592,7 @@ public sealed class EngineTests : IDisposable
     [Fact]
     public void Storage_ReloadsDataLargerThanTheClockBufferPool()
     {
-        var engine = new DbEngine(_databasePath);
+        using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
         var expectedBody = new string('x', Constants.DefaultPageSize * (Constants.DefaultBufferPoolCapacity + 2));
         engine.Execute(new InsertStatement
@@ -398,7 +601,8 @@ public sealed class EngineTests : IDisposable
             Values = new List<object> { 1, expectedBody }
         });
 
-        var reloadedEngine = new DbEngine(_databasePath);
+        engine.Dispose();
+        using var reloadedEngine = new DbEngine(_databasePath);
         var rows = Assert.IsType<List<Row>>(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
 
@@ -408,9 +612,46 @@ public sealed class EngineTests : IDisposable
             Constants.DefaultPageSize * Constants.DefaultBufferPoolCapacity);
     }
 
+    [Fact]
+    public void Execute_UsesPersistentBPlusTreeForPrimaryKeyCrud()
+    {
+        using var engine = new DbEngine(_databasePath);
+        engine.Execute(Parser.Parse("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"));
+        Assert.False(File.Exists($"{_databasePath}.users.pkidx"));
+        for (int id = 1; id <= 70; id++)
+            engine.Execute(Parser.Parse($"INSERT INTO users VALUES ({id}, 'user-{id}')"));
+
+        var selected = Assert.IsType<List<Row>>(
+            engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 37")));
+        Assert.Equal("user-37", Assert.Single(selected).Values["name"].ToString());
+
+        selected = Assert.IsType<List<Row>>(
+            engine.Execute(Parser.Parse("SELECT * FROM users WHERE id > 67")));
+        Assert.Equal(new[] { "user-68", "user-69", "user-70" },
+            selected.Select(row => row.Values["name"].ToString()));
+
+        engine.Execute(Parser.Parse("UPDATE users SET id = 170 WHERE id = 70"));
+        selected = Assert.IsType<List<Row>>(
+            engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 170")));
+        Assert.Equal("user-70", Assert.Single(selected).Values["name"].ToString());
+
+        engine.Execute(Parser.Parse("DELETE FROM users WHERE id = 170"));
+        Assert.Empty(Assert.IsType<List<Row>>(
+            engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 170"))));
+
+        engine.Dispose();
+        using var reloadedEngine = new DbEngine(_databasePath);
+        selected = Assert.IsType<List<Row>>(
+            reloadedEngine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 37")));
+        Assert.Equal("user-37", Assert.Single(selected).Values["name"].ToString());
+        Assert.Throws<Exception>(() =>
+            reloadedEngine.Execute(Parser.Parse("INSERT INTO users VALUES (37, 'duplicate')")));
+    }
+
     public void Dispose()
     {
         if (File.Exists(_databasePath))
             File.Delete(_databasePath);
+
     }
 }

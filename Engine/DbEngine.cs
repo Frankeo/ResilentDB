@@ -2,15 +2,13 @@ using Engine.Executors;
 
 namespace Engine
 {
-    public class DbEngine
+    public class DbEngine : IDisposable
     {
         private readonly ExecutionDispatcher _executionDispatcher = new();
         private readonly Storage _storage;
         private Schema _schema;
-        private Dictionary<string, List<Row>> _tables;
 
         internal Schema Schema => _schema;
-        internal Dictionary<string, List<Row>> Tables => _tables;
 
         public DbEngine(string filePath)
         {
@@ -19,17 +17,21 @@ namespace Engine
             {
                 _storage.CreateFile();
             }
-            var (schema, tables) = _storage.Load();
-            _schema = schema;
-            _tables = tables;
+            _schema = _storage.Load();
+            _storage.ValidatePrimaryIndexes(_schema);
         }
 
-        public void Save()
-        {
-            _storage.Save(_schema, _tables);
-        }
+        public void Save() => _storage.Save(_schema);
 
         public object Execute(Statement stmt) => _executionDispatcher.Execute(this, stmt);
+
+        public void Dispose() => _storage.Dispose();
+
+        internal PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName) =>
+            _storage.OpenPrimaryIndex(tableName);
+
+        internal void CreatePrimaryIndex(string tableName) =>
+            _storage.CreatePrimaryIndex(tableName, _schema);
 
         public IReadOnlyList<object> Execute(string sql)
         {

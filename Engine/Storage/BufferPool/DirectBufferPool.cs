@@ -13,6 +13,8 @@ public sealed class DirectBufferPool : IBufferPool
 
     public int PageSize => _pager.PageSize;
     public int PageCount => _pager.ReadHeader().PageCount;
+    public byte[] FetchPage(int pageId) => _pager.ReadPage(pageId);
+    public bool UnpinPage(int pageId, bool dirty) => true;
     public byte[] ReadPage(int pageId) => _pager.ReadPage(pageId);
     public void WritePage(int pageId, byte[] data) => _pager.WritePage(pageId, data);
     public int AllocatePage() => _pager.AllocatePage();

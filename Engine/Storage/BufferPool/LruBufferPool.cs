@@ -44,8 +44,32 @@ public sealed class LruBufferPool : IBufferPool
 
     public byte[] ReadPage(int pageId)
     {
+        byte[] data = FetchPage(pageId).ToArray();
+        UnpinPage(pageId, dirty: false);
+        return data;
+    }
+
+    public byte[] FetchPage(int pageId)
+    {
         lock (_lock)
-            return GetPageLocked(pageId).Data.ToArray();
+        {
+            var page = GetPageLocked(pageId);
+            page.PinCount++;
+            return page.Data;
+        }
+    }
+
+    public bool UnpinPage(int pageId, bool dirty)
+    {
+        lock (_lock)
+        {
+            if (!_pages.TryGetValue(pageId, out var page) || page.PinCount == 0)
+                return false;
+
+            page.PinCount--;
+            page.IsDirty |= dirty;
+            return true;
+        }
     }
 
     public void WritePage(int pageId, byte[] data)
@@ -57,10 +81,12 @@ public sealed class LruBufferPool : IBufferPool
         lock (_lock)
         {
             var page = GetPageLocked(pageId);
+            page.PinCount++;
             data.CopyTo(page.Data, 0);
             if (data.Length < page.Data.Length)
                 Array.Clear(page.Data, data.Length, page.Data.Length - data.Length);
             page.IsDirty = true;
+            page.PinCount--;
         }
     }
 
@@ -126,7 +152,13 @@ public sealed class LruBufferPool : IBufferPool
 
     private void EvictLeastRecentlyUsedLocked()
     {
-        var node = _leastRecentlyUsed.Last!;
+        var node = _leastRecentlyUsed.Last;
+        while (node is not null && _pages[node.Value].PinCount > 0)
+            node = node.Previous;
+
+        if (node is null)
+            throw new InvalidOperationException(Constants.BufferPoolNoUnpinnedPageError);
+
         var page = _pages[node.Value];
         if (page.IsDirty)
         {
@@ -135,7 +167,7 @@ public sealed class LruBufferPool : IBufferPool
         }
 
         _pages.Remove(page.PageId);
-        _leastRecentlyUsed.RemoveLast();
+        _leastRecentlyUsed.Remove(node);
     }
 
     private void MarkMostRecentlyUsedLocked(CacheEntry page)
@@ -156,5 +188,6 @@ public sealed class LruBufferPool : IBufferPool
         public byte[] Data { get; } = data;
         public LinkedListNode<int> Node { get; } = node;
         public bool IsDirty { get; set; }
+        public int PinCount { get; set; }
     }
 }

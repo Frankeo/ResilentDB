@@ -15,13 +15,7 @@ public sealed class SelectExecutor : ExecutorBase
 
         ValidateWhereClause(table, stmt.Where);
 
-        if (!engine.Tables.TryGetValue(stmt.TableName, out var rows))
-            throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
-
-        if (stmt.Where != null)
-        {
-            rows = rows.Where(r => MatchesWhere(r, stmt.Where)).ToList();
-        }
+        var rows = FindMatchingRows(engine, stmt.TableName, table, stmt.Where);
 
         if (stmt.Columns.Count == 1 && stmt.Columns[0] == "*")
         {

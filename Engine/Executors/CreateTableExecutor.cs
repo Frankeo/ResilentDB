@@ -20,8 +20,7 @@ public sealed class CreateTableExecutor : ExecutorBase
         };
 
         engine.Schema.Tables[stmt.TableName] = tableDef;
-        engine.Tables[stmt.TableName] = new List<Row>();
-
+        engine.CreatePrimaryIndex(stmt.TableName);
         engine.Save();
         return Constants.TableCreatedMessage;
     }

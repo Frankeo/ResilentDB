@@ -13,10 +13,20 @@ public sealed class DeleteExecutor : ExecutorBase
             throw new Exception(string.Format(Constants.TableNotFoundError, delete.TableName));
 
         ValidateWhereClause(table, delete.Where);
-        var rows = engine.Tables[delete.TableName];
-        var deletedCount = rows.RemoveAll(row => MatchesWhere(row, delete.Where));
+        var rowsToDelete = FindMatchingRows(engine, delete.TableName, table, delete.Where);
+        var primaryKey = table.Columns.SingleOrDefault(column => column.IsPrimaryKey);
+        if (primaryKey is null)
+            throw new Exception(Constants.PrimaryKeyRequiredError);
+
+        var index = engine.OpenPrimaryIndex(delete.TableName);
+        foreach (var row in rowsToDelete)
+        {
+            if (TryConvertPrimaryKey(row.Values[primaryKey.Name], out var key))
+                index.Delete(key);
+        }
+
         engine.Save();
-        return string.Format(Constants.DeletedRowsMessage, deletedCount);
+        return string.Format(Constants.DeletedRowsMessage, rowsToDelete.Count);
     }
 
 }

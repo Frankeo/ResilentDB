@@ -49,8 +49,37 @@ public sealed class ClockBufferPool : IBufferPool
 
     public byte[] ReadPage(int pageId)
     {
+        byte[] data = FetchPage(pageId).ToArray();
+        UnpinPage(pageId, dirty: false);
+        return data;
+    }
+
+    public byte[] FetchPage(int pageId)
+    {
         lock (_lock)
-            return GetPage(pageId).Data.ToArray();
+        {
+            var page = GetPage(pageId);
+            page.PinCount++;
+            page.Referenced = true;
+            return page.Data;
+        }
+    }
+
+    public bool UnpinPage(int pageId, bool dirty)
+    {
+        lock (_lock)
+        {
+            if (!_map.TryGetValue(pageId, out int index))
+                return false;
+
+            var page = _frames[index];
+            if (page.PinCount <= 0)
+                return false;
+
+            page.PinCount--;
+            page.IsDirty |= dirty;
+            return true;
+        }
     }
 
     public void WritePage(int pageId, byte[] data)
@@ -62,11 +91,13 @@ public sealed class ClockBufferPool : IBufferPool
         lock (_lock)
         {
             var page = GetPage(pageId);
+            page.PinCount++;
             data.CopyTo(page.Data, 0);
             if (data.Length < page.Data.Length)
                 Array.Clear(page.Data, data.Length, page.Data.Length - data.Length);
             page.IsDirty = true;
             page.Referenced = true;
+            page.PinCount--;
         }
     }
 
@@ -127,10 +158,11 @@ public sealed class ClockBufferPool : IBufferPool
 
     private int SelectVictim()
     {
-        while (true)
+        int attempts = 0;
+        while (attempts < _capacity * 2)
         {
             var page = _frames[_clockHand];
-            if (!page.Referenced)
+            if (page.PinCount == 0 && !page.Referenced)
             {
                 if (page.IsDirty)
                 {
@@ -144,9 +176,13 @@ public sealed class ClockBufferPool : IBufferPool
                 return victimIndex;
             }
 
-            page.Referenced = false;
+            if (page.PinCount == 0)
+                page.Referenced = false;
             _clockHand = (_clockHand + 1) % _capacity;
+            attempts++;
         }
+
+        throw new InvalidOperationException(Constants.BufferPoolNoUnpinnedPageError);
     }
 
     private void FlushAll()
@@ -166,6 +202,7 @@ public sealed class ClockBufferPool : IBufferPool
         public int PageId { get; } = pageId;
         public byte[] Data { get; } = data;
         public bool IsDirty { get; set; }
+        public int PinCount { get; set; }
         public bool Referenced { get; set; } = true;
     }
 }

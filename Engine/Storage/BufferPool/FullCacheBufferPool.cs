@@ -18,6 +18,8 @@ public sealed class FullCacheBufferPool : IBufferPool
     public int PageCount => _pager.ReadHeader().PageCount;
     public int CachedPageCount => _pages.Count;
 
+    public byte[] FetchPage(int pageId) => GetPage(pageId).Data.ToArray();
+    public bool UnpinPage(int pageId, bool dirty) => _pages.ContainsKey(pageId);
     public byte[] ReadPage(int pageId) => GetPage(pageId).Data.ToArray();
 
     public void WritePage(int pageId, byte[] data)

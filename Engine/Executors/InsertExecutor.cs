@@ -24,20 +24,22 @@ public sealed class InsertExecutor : ExecutorBase
         }
 
         var primaryKey = tableDef.Columns.SingleOrDefault(column => column.IsPrimaryKey);
-        if (primaryKey is not null)
-        {
-            if (!row.Values.TryGetValue(primaryKey.Name, out var keyValue))
-                throw new Exception(Constants.InsertMissingPrimaryKeyError);
+        if (primaryKey is null)
+            throw new Exception(Constants.PrimaryKeyRequiredError);
 
-            if (keyValue is not int)
-                throw new Exception(Constants.PrimaryKeyMustBeIntegerError);
+        if (!row.Values.TryGetValue(primaryKey.Name, out var keyValue))
+            throw new Exception(Constants.InsertMissingPrimaryKeyError);
 
-            if (engine.Tables[stmt.TableName].Any(existing =>
-                    ValuesEqual(existing.Values[primaryKey.Name], keyValue)))
-                throw new Exception(Constants.DuplicatePrimaryKeyError);
-        }
+        if (keyValue is not int)
+            throw new Exception(Constants.PrimaryKeyMustBeIntegerError);
 
-        engine.Tables[stmt.TableName].Add(row);
+        long key = Convert.ToInt64(keyValue);
+        var index = engine.OpenPrimaryIndex(stmt.TableName);
+        if (index.ContainsKey(key))
+            throw new Exception(Constants.DuplicatePrimaryKeyError);
+
+        index.InsertRecord(key, row);
+
         engine.Save();
         return Constants.InsertSuccessMessage;
     }
