@@ -312,6 +312,28 @@ public sealed class EngineTests : IDisposable
         Assert.True(new FileInfo(_databasePath).Length > Constants.DefaultPageSize * 3);
     }
 
+    [Fact]
+    public void Storage_ReloadsDataLargerThanTheClockBufferPool()
+    {
+        var engine = new DbEngine(_databasePath);
+        engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER, body TEXT)"));
+        var expectedBody = new string('x', Constants.DefaultPageSize * (Constants.DefaultBufferPoolCapacity + 2));
+        engine.Execute(new InsertStatement
+        {
+            TableName = "documents",
+            Values = new List<object> { 1, expectedBody }
+        });
+
+        var reloadedEngine = new DbEngine(_databasePath);
+        var rows = Assert.IsType<List<Row>>(
+            reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
+
+        var row = Assert.Single(rows);
+        Assert.Equal(expectedBody, row.Values["body"].ToString());
+        Assert.True(new FileInfo(_databasePath).Length >
+            Constants.DefaultPageSize * Constants.DefaultBufferPoolCapacity);
+    }
+
     public void Dispose()
     {
         if (File.Exists(_databasePath))

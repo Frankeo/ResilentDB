@@ -3,6 +3,7 @@ namespace Engine
 	public static class Constants
 	{
 		public const int DefaultPageSize = 4096;
+		public const int DefaultBufferPoolCapacity = 256;
 		internal const string FileMagic = "RDBP";
 		internal const int FileVersion = 1;
 		internal const int HeaderSize = 16;

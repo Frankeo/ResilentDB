@@ -14,7 +14,7 @@ public sealed class ClockBufferPool : IBufferPool
     private readonly object _lock = new();
     private int _clockHand;
 
-    public ClockBufferPool(string filePath, int capacity = 100)
+    public ClockBufferPool(string filePath, int capacity = Constants.DefaultBufferPoolCapacity)
     {
         if (capacity <= 0)
             throw new ArgumentOutOfRangeException(nameof(capacity));

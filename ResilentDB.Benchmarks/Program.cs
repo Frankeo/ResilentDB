@@ -7,7 +7,7 @@ using Engine;
 const int dataPageCount = 16384;
 const int readOperations = 20000;
 const int writeOperations = 2000;
-const int cacheCapacity = 256;
+const int cacheCapacity = Constants.DefaultBufferPoolCapacity;
 const int repetitions = 5;
 
 if (args.Length > 0 && args[0] == "--worker")

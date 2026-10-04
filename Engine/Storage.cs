@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
+using Engine.BufferPool;
 
 namespace Engine
 {
@@ -20,14 +21,14 @@ namespace Engine
 
         public (Schema schema, Dictionary<string, List<Row>> tables) Load()
         {
-            using var pager = new Pager(_filePath);
-            var header = pager.ReadHeader();
-            if (header.PageCount < 2)
+            using var bufferPool = new ClockBufferPool(_filePath);
+            var pageCount = bufferPool.PageCount;
+            if (pageCount < 2)
                 throw new InvalidDataException(Constants.InvalidFileError);
 
             using var pageData = new MemoryStream();
-            for (var pageId = 1; pageId < header.PageCount; pageId++)
-                pageData.Write(pager.ReadPage(pageId));
+            for (var pageId = 1; pageId < pageCount; pageId++)
+                pageData.Write(bufferPool.ReadPage(pageId));
 
             var storedData = pageData.ToArray();
             if (storedData.Length < sizeof(int))
@@ -93,14 +94,16 @@ namespace Engine
             var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
             try
             {
-                using (var pager = new Pager(temporaryPath))
+                using (var bufferPool = new ClockBufferPool(temporaryPath))
                 {
-                    for (var offset = 0; offset < storedData.Length; offset += pager.PageSize)
+                    for (var offset = 0; offset < storedData.Length; offset += bufferPool.PageSize)
                     {
-                        var pageId = pager.AllocatePage();
-                        var length = Math.Min(pager.PageSize, storedData.Length - offset);
-                        pager.WritePage(pageId, storedData.AsSpan(offset, length).ToArray());
+                        var pageId = bufferPool.AllocatePage();
+                        var length = Math.Min(bufferPool.PageSize, storedData.Length - offset);
+                        bufferPool.WritePage(pageId, storedData.AsSpan(offset, length).ToArray());
                     }
+
+                    bufferPool.Flush();
                 }
 
                 File.Move(temporaryPath, _filePath, overwrite: true);
