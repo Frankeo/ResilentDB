@@ -18,16 +18,13 @@ public sealed partial class PagedPrimaryKeyBPlusTree
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("RDBI");
 
     private int MinimumLeafKeys => (_maxKeys + 1) / 2;
-    private int MinimumInternalChildren => (_maxKeys + 2) / 2;
-    private int MinimumInternalKeys => MinimumInternalChildren - 1;
+    private int MinimumInternalKeys => _maxKeys / 2;
 
     private void ValidatePageCapacity()
     {
-        if (NodeHeaderSize + (LeafOverflowEntrySize * _maxKeys) > _bufferPool.PageSize ||
-            NodeHeaderSize + sizeof(int) + (InternalEntrySize * _maxKeys) > _bufferPool.PageSize)
-        {
+        if (NodeHeaderSize + LeafOverflowEntrySize * _maxKeys > _bufferPool.PageSize ||
+            NodeHeaderSize + sizeof(int) + InternalEntrySize * _maxKeys > _bufferPool.PageSize)
             throw new ArgumentOutOfRangeException(nameof(_maxKeys));
-        }
     }
 
     private static int ReadInt32(byte[] bytes, int offset) =>

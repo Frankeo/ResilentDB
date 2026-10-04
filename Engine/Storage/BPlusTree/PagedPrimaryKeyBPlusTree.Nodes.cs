@@ -5,10 +5,10 @@ public sealed partial class PagedPrimaryKeyBPlusTree
     private sealed class LeafNode
     {
         public List<LeafEntry> Entries { get; } = new();
-        public int NextPageId { get; set; } = -1;
+        public int NextPageId { get; set; } = Constants.InvalidPageId;
     }
 
-    private sealed class LeafEntry(long key, byte[] payload, int overflowHeadPageId = -1)
+    private sealed class LeafEntry(long key, byte[] payload, int overflowHeadPageId = Constants.InvalidPageId)
     {
         public long Key { get; } = key;
         public byte[] Payload { get; } = payload;
