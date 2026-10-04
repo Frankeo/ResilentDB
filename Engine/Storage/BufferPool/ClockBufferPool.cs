@@ -13,6 +13,7 @@ public sealed class ClockBufferPool : IBufferPool
     private readonly Dictionary<int, int> _map;
     private readonly object _lock = new();
     private int _clockHand;
+    private bool _disposed;
 
     public ClockBufferPool(string filePath, int capacity = Constants.DefaultBufferPoolCapacity)
     {
@@ -25,14 +26,27 @@ public sealed class ClockBufferPool : IBufferPool
         _map = new Dictionary<int, int>(capacity);
     }
 
-    public int PageSize => _pager.PageSize;
+    public int PageSize
+    {
+        get
+        {
+            lock (_lock)
+            {
+                ThrowIfDisposed();
+                return _pager.PageSize;
+            }
+        }
+    }
 
     public int PageCount
     {
         get
         {
             lock (_lock)
+            {
+                ThrowIfDisposed();
                 return _pager.ReadHeader().PageCount;
+            }
         }
     }
 
@@ -41,11 +55,24 @@ public sealed class ClockBufferPool : IBufferPool
         get
         {
             lock (_lock)
+            {
+                ThrowIfDisposed();
                 return _frames.Count;
+            }
         }
     }
 
-    public int Capacity => _capacity;
+    public int Capacity
+    {
+        get
+        {
+            lock (_lock)
+            {
+                ThrowIfDisposed();
+                return _capacity;
+            }
+        }
+    }
 
     public byte[] ReadPage(int pageId)
     {
@@ -65,10 +92,14 @@ public sealed class ClockBufferPool : IBufferPool
         }
     }
 
+    public PageHandle FetchPageHandle(int pageId) =>
+        new(this, pageId, FetchPage(pageId));
+
     public bool UnpinPage(int pageId, bool dirty)
     {
         lock (_lock)
         {
+            ThrowIfDisposed();
             if (!_map.TryGetValue(pageId, out int index))
                 return false;
 
@@ -90,6 +121,7 @@ public sealed class ClockBufferPool : IBufferPool
 
         lock (_lock)
         {
+            ThrowIfDisposed();
             var page = GetPage(pageId);
             page.PinCount++;
             data.CopyTo(page.Data, 0);
@@ -104,13 +136,19 @@ public sealed class ClockBufferPool : IBufferPool
     public int AllocatePage()
     {
         lock (_lock)
+        {
+            ThrowIfDisposed();
             return _pager.AllocatePage();
+        }
     }
 
     public void Flush()
     {
         lock (_lock)
+        {
+            ThrowIfDisposed();
             FlushAll();
+        }
     }
 
     public void Close() => Dispose();
@@ -119,6 +157,11 @@ public sealed class ClockBufferPool : IBufferPool
     {
         lock (_lock)
         {
+            if (_disposed)
+                return;
+            if (_frames.Any(page => page.PinCount > 0))
+                throw new InvalidOperationException(Constants.BufferPoolNoUnpinnedPageError);
+
             try
             {
                 FlushAll();
@@ -126,12 +169,14 @@ public sealed class ClockBufferPool : IBufferPool
             finally
             {
                 _pager.Dispose();
+                _disposed = true;
             }
         }
     }
 
     private ClockPage GetPage(int pageId)
     {
+        ThrowIfDisposed();
         if (_map.TryGetValue(pageId, out var index))
         {
             var cachedPage = _frames[index];
@@ -195,6 +240,12 @@ public sealed class ClockBufferPool : IBufferPool
             _pager.WritePage(page.PageId, page.Data);
             page.IsDirty = false;
         }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(ClockBufferPool));
     }
 
     private sealed class ClockPage(int pageId, byte[] data)

@@ -5,6 +5,9 @@ namespace Engine
 		public const int DefaultPageSize = 4096;
 		public const int DefaultBufferPoolCapacity = 256;
 		internal const int DefaultBPlusTreeMaxKeys = 32;
+		internal const int CatalogPageId = 1;
+		internal const int FirstAllocatablePageId = 2;
+		internal const int InvalidPageId = -1;
 		internal const string FileMagic = "RDBP";
 		internal const int FileVersion = 4;
 		internal const int HeaderSize = 16;
@@ -28,6 +31,7 @@ namespace Engine
 		internal const string HeaderPageAccessError = "La página 0 está reservada para el encabezado";
 		internal const string PageIdOutOfRangeError = "PageId {0} fuera de rango";
 		internal const string PageDataTooLargeError = "Los datos no caben en una página";
+		internal const string CatalogTooLargeError = "El catálogo no cabe en una página";
 		internal const string BufferPoolNoUnpinnedPageError = "No hay páginas disponibles sin fijar en el buffer pool";
 		internal const string TableAlreadyExistsError = "La tabla {0} ya existe";
 		internal const string TableNotFoundError = "La tabla {0} no existe";

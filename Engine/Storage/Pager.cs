@@ -7,6 +7,8 @@ public sealed class Pager : IDisposable
     private readonly string _filePath;
     private readonly int _pageSize;
     private FileStream? _stream;
+    private HeaderPage? _header;
+    private bool _disposed;
 
     public Pager(string filePath, int pageSize = Constants.DefaultPageSize)
     {
@@ -35,10 +37,25 @@ public sealed class Pager : IDisposable
         }
     }
 
-    public int PageSize => _pageSize;
+    public int PageSize
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return _pageSize;
+        }
+    }
+
+    public int PageCount => ReadHeader().PageCount;
+
+    public void Flush() => GetStream().Flush(flushToDisk: true);
 
     public HeaderPage ReadHeader()
     {
+        ThrowIfDisposed();
+        if (_header is not null)
+            return CopyHeader(_header);
+
         var stream = GetStream();
         stream.Seek(0, SeekOrigin.Begin);
         using var reader = new BinaryReader(stream, Encoding.ASCII, leaveOpen: true);
@@ -58,7 +75,8 @@ public sealed class Pager : IDisposable
             throw new InvalidDataException(Constants.InvalidFileError);
         }
 
-        return header;
+        _header = header;
+        return CopyHeader(header);
     }
 
     public byte[] ReadPage(int pageId)
@@ -83,25 +101,18 @@ public sealed class Pager : IDisposable
         ArgumentNullException.ThrowIfNull(data);
         if (pageId <= 0)
             throw new ArgumentOutOfRangeException(nameof(pageId), Constants.HeaderPageAccessError);
+        if (pageId >= PageCount)
+            throw new ArgumentOutOfRangeException(
+                nameof(pageId),
+                string.Format(Constants.PageIdOutOfRangeError, pageId));
         if (data.Length > _pageSize)
             throw new ArgumentException(Constants.PageDataTooLargeError, nameof(data));
 
         var stream = GetStream();
-        var requiredLength = (long)(pageId + 1) * _pageSize;
-        if (stream.Length < requiredLength)
-            stream.SetLength(requiredLength);
-
         var page = new byte[_pageSize];
         data.CopyTo(page, 0);
         stream.Seek((long)pageId * _pageSize, SeekOrigin.Begin);
         stream.Write(page);
-
-        var header = ReadHeader();
-        if (pageId >= header.PageCount)
-        {
-            header.PageCount = pageId + 1;
-            WriteHeader(header);
-        }
     }
 
     public int AllocatePage()
@@ -120,8 +131,19 @@ public sealed class Pager : IDisposable
 
     public void Dispose()
     {
-        _stream?.Dispose();
-        _stream = null;
+        if (_disposed)
+            return;
+
+        try
+        {
+            _stream?.Flush(flushToDisk: true);
+        }
+        finally
+        {
+            _stream?.Dispose();
+            _stream = null;
+            _disposed = true;
+        }
     }
 
     private void CreateFile()
@@ -144,6 +166,8 @@ public sealed class Pager : IDisposable
         stream.Seek(0, SeekOrigin.Begin);
         using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
         WriteHeader(writer, header);
+        stream.Flush(flushToDisk: true);
+        _header = CopyHeader(header);
     }
 
     private static void WriteHeader(BinaryWriter writer, HeaderPage header)
@@ -155,7 +179,23 @@ public sealed class Pager : IDisposable
     }
 
     private FileStream GetStream() =>
-        _stream ?? throw new ObjectDisposedException(nameof(Pager));
+        _disposed || _stream is null
+            ? throw new ObjectDisposedException(nameof(Pager))
+            : _stream;
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(Pager));
+    }
+
+    private static HeaderPage CopyHeader(HeaderPage header) => new()
+    {
+        Magic = header.Magic,
+        Version = header.Version,
+        PageSize = header.PageSize,
+        PageCount = header.PageCount
+    };
 }
 
 public sealed class HeaderPage

@@ -10,6 +10,7 @@ public sealed class LruBufferPool : IBufferPool
     private readonly LinkedList<int> _leastRecentlyUsed = new();
     private readonly object _lock = new();
     private int _pageCount;
+    private bool _disposed;
 
     public LruBufferPool(string filePath, int capacity = 100)
     {
@@ -21,13 +22,23 @@ public sealed class LruBufferPool : IBufferPool
         _pageCount = _pager.ReadHeader().PageCount;
     }
 
-    public int PageSize => _pager.PageSize;
+    public int PageSize
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return _pager.PageSize;
+        }
+    }
     public int PageCount
     {
         get
         {
             lock (_lock)
+            {
+                ThrowIfDisposed();
                 return _pageCount;
+            }
         }
     }
 
@@ -36,11 +47,24 @@ public sealed class LruBufferPool : IBufferPool
         get
         {
             lock (_lock)
+            {
+                ThrowIfDisposed();
                 return _pages.Count;
+            }
         }
     }
 
-    public int Capacity => _capacity;
+    public int Capacity
+    {
+        get
+        {
+            lock (_lock)
+            {
+                ThrowIfDisposed();
+                return _capacity;
+            }
+        }
+    }
 
     public byte[] ReadPage(int pageId)
     {
@@ -59,10 +83,14 @@ public sealed class LruBufferPool : IBufferPool
         }
     }
 
+    public PageHandle FetchPageHandle(int pageId) =>
+        new(this, pageId, FetchPage(pageId));
+
     public bool UnpinPage(int pageId, bool dirty)
     {
         lock (_lock)
         {
+            ThrowIfDisposed();
             if (!_pages.TryGetValue(pageId, out var page) || page.PinCount == 0)
                 return false;
 
@@ -80,6 +108,7 @@ public sealed class LruBufferPool : IBufferPool
 
         lock (_lock)
         {
+            ThrowIfDisposed();
             var page = GetPageLocked(pageId);
             page.PinCount++;
             data.CopyTo(page.Data, 0);
@@ -94,6 +123,7 @@ public sealed class LruBufferPool : IBufferPool
     {
         lock (_lock)
         {
+            ThrowIfDisposed();
             var pageId = _pager.AllocatePage();
             _pageCount = pageId + 1;
             return pageId;
@@ -103,13 +133,21 @@ public sealed class LruBufferPool : IBufferPool
     public void Flush()
     {
         lock (_lock)
+        {
+            ThrowIfDisposed();
             FlushLocked();
+        }
     }
 
     public void Dispose()
     {
         lock (_lock)
         {
+            if (_disposed)
+                return;
+            if (_pages.Values.Any(page => page.PinCount > 0))
+                throw new InvalidOperationException(Constants.BufferPoolNoUnpinnedPageError);
+
             try
             {
                 FlushLocked();
@@ -117,6 +155,7 @@ public sealed class LruBufferPool : IBufferPool
             finally
             {
                 _pager.Dispose();
+                _disposed = true;
             }
         }
     }
@@ -131,10 +170,12 @@ public sealed class LruBufferPool : IBufferPool
             _pager.WritePage(pageId, page.Data);
             page.IsDirty = false;
         }
+        _pager.Flush();
     }
 
     private CacheEntry GetPageLocked(int pageId)
     {
+        ThrowIfDisposed();
         ValidatePageIdLocked(pageId);
         if (_pages.TryGetValue(pageId, out var cached))
         {
@@ -180,6 +221,12 @@ public sealed class LruBufferPool : IBufferPool
     {
         if (pageId <= 0 || pageId >= _pageCount)
             throw new ArgumentOutOfRangeException(nameof(pageId));
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(LruBufferPool));
     }
 
     private sealed class CacheEntry(int pageId, byte[] data, LinkedListNode<int> node)

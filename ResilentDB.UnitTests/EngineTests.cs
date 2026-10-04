@@ -150,7 +150,7 @@ public sealed class EngineTests : IDisposable
 
                 using var reloaded = new PagedPrimaryKeyBPlusTree(
                     indexPath,
-                    maxKeys: 3,
+                    maxKeys: 32,
                     bufferPoolCapacity: 2);
                 reloaded.Validate();
                 Assert.Equal(32, reloaded.Count);
@@ -232,6 +232,72 @@ public sealed class EngineTests : IDisposable
                 tree.Validate();
                 Assert.Equal(64, tree.Count);
                 Assert.Equal(allocatedPageCount, tree.PageCount);
+            }
+            finally
+            {
+                if (File.Exists(indexPath))
+                    File.Delete(indexPath);
+            }
+        }
+
+        [Fact]
+        public void PagedPrimaryKeyBPlusTree_MatchesRandomizedSortedDictionaryOperations()
+        {
+            var indexPath = $"{_databasePath}.random-tree.idx";
+            var expected = new SortedDictionary<long, long>();
+            var random = new Random(84521);
+            try
+            {
+                using (var tree = new PagedPrimaryKeyBPlusTree(
+                           indexPath,
+                           maxKeys: 3,
+                           bufferPoolCapacity: 2))
+                {
+                    for (int operation = 0; operation < 500; operation++)
+                    {
+                        long key = random.Next(0, 120);
+                        switch (random.Next(4))
+                        {
+                            case 0:
+                                if (expected.TryAdd(key, operation))
+                                    tree.Insert(key, operation);
+                                else
+                                    Assert.Throws<InvalidOperationException>(() => tree.Insert(key, operation));
+                                break;
+                            case 1:
+                                Assert.Equal(expected.Remove(key), tree.Delete(key));
+                                break;
+                            case 2:
+                                Assert.Equal(
+                                    expected.TryGetValue(key, out long expectedValue),
+                                    tree.TryGetValue(key, out long actualValue));
+                                if (expected.ContainsKey(key))
+                                    Assert.Equal(expectedValue, actualValue);
+                                break;
+                            default:
+                                long maximum = key + random.Next(0, 20);
+                                Assert.Equal(
+                                    expected.Where(pair => pair.Key >= key && pair.Key <= maximum)
+                                        .Select(pair => pair.Key),
+                                    tree.Scan(key, maximum).Select(pair => pair.Key));
+                                break;
+                        }
+
+                        if (operation % 25 == 0)
+                        {
+                            tree.Validate();
+                            Assert.Equal(expected.Count, tree.Count);
+                            Assert.Equal(expected, tree.Scan().ToDictionary(pair => pair.Key, pair => pair.Value));
+                        }
+                    }
+                }
+
+                using var reloaded = new PagedPrimaryKeyBPlusTree(
+                    indexPath,
+                    maxKeys: 3,
+                    bufferPoolCapacity: 2);
+                reloaded.Validate();
+                Assert.Equal(expected, reloaded.Scan().ToDictionary(pair => pair.Key, pair => pair.Value));
             }
             finally
             {
@@ -394,7 +460,9 @@ public sealed class EngineTests : IDisposable
 
         Assert.Throws<ArgumentOutOfRangeException>(() => pager.ReadPage(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => pager.WritePage(0, Array.Empty<byte>()));
-        Assert.Throws<ArgumentException>(() => pager.WritePage(1, new byte[65]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => pager.WritePage(1, new byte[] { 1 }));
+        int pageId = pager.AllocatePage();
+        Assert.Throws<ArgumentException>(() => pager.WritePage(pageId, new byte[65]));
     }
 
     [Fact]
@@ -541,6 +609,57 @@ public sealed class EngineTests : IDisposable
 
         using var verifyPager = new Pager(_databasePath);
         Assert.Equal(9, verifyPager.ReadPage(firstPageId)[0]);
+    }
+
+    [Fact]
+    public void ClockBufferPool_PageHandleUnpinsAndPersistsDirtyData()
+    {
+        int pageId;
+        using (var pager = new Pager(_databasePath))
+        {
+            pageId = pager.AllocatePage();
+            pager.WritePage(pageId, new byte[] { 1 });
+        }
+
+        using (var bufferPool = new ClockBufferPool(_databasePath, capacity: 1))
+        {
+            using (var handle = bufferPool.FetchPageHandle(pageId))
+            {
+                handle.Data[0] = 7;
+                handle.MarkDirty();
+                Assert.Throws<InvalidOperationException>(() => bufferPool.Dispose());
+            }
+
+            Assert.Equal(7, bufferPool.ReadPage(pageId)[0]);
+        }
+
+        var disposedPool = new ClockBufferPool(_databasePath);
+        disposedPool.Dispose();
+        disposedPool.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => disposedPool.ReadPage(pageId));
+    }
+
+    [Fact]
+    public void Pager_DisposePreventsReadsEvenWhenHeaderWasCached()
+    {
+        var pager = new Pager(_databasePath);
+        Assert.Equal(1, pager.ReadHeader().PageCount);
+        pager.Dispose();
+        pager.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => pager.ReadHeader());
+        Assert.Throws<ObjectDisposedException>(() => pager.AllocatePage());
+    }
+
+    [Fact]
+    public void DbEngine_DisposePreventsFurtherOperations()
+    {
+        var engine = new DbEngine(_databasePath);
+        engine.Dispose();
+        engine.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => engine.Save());
+        Assert.Throws<ObjectDisposedException>(() => engine.Execute("SELECT * FROM users"));
     }
 
     [Fact]

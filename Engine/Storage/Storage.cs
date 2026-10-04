@@ -14,22 +14,37 @@ namespace Engine
         private readonly Dictionary<string, PagedPrimaryKeyBPlusTree> _primaryIndexes =
             new(StringComparer.OrdinalIgnoreCase);
         private ClockBufferPool? _bufferPool;
+        private bool _disposed;
 
-        private ClockBufferPool BufferPool => _bufferPool ??= new ClockBufferPool(_filePath);
+        private ClockBufferPool BufferPool
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _bufferPool ??= new ClockBufferPool(_filePath);
+            }
+        }
 
         public Storage(string filePath)
         {
             _filePath = filePath;
         }
 
-        public bool Exists => File.Exists(_filePath);
+        public bool Exists
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return File.Exists(_filePath);
+            }
+        }
 
         internal string FilePath => _filePath;
         internal IReadOnlyDictionary<string, int> PrimaryIndexMetadataPages => _primaryIndexMetadataPages;
 
         public void CreateFile()
         {
-            if (BufferPool.AllocatePage() != 1)
+            if (BufferPool.AllocatePage() != Constants.CatalogPageId)
                 throw new InvalidDataException(Constants.InvalidFileError);
 
             WriteCatalog(new Schema());
@@ -41,7 +56,7 @@ namespace Engine
             if (BufferPool.PageCount < 2)
                 throw new InvalidDataException(Constants.InvalidFileError);
 
-            byte[] page = BufferPool.ReadPage(1);
+            byte[] page = BufferPool.ReadPage(Constants.CatalogPageId);
             if (!page.AsSpan(0, CatalogMagic.Length).SequenceEqual(CatalogMagic))
                 throw new InvalidDataException(Constants.InvalidFileError);
 
@@ -55,13 +70,14 @@ namespace Engine
                 catalog.PrimaryIndexMetadataPages,
                 StringComparer.OrdinalIgnoreCase);
 
-            int expectedIndexCount = catalog.Schema.Tables.Values.Count(table =>
-                table.Columns.Any(column => column.IsPrimaryKey));
+            int expectedIndexCount = catalog.Schema.Tables.Count;
             if (_primaryIndexMetadataPages.Count != expectedIndexCount ||
+                _primaryIndexMetadataPages.Values.Distinct().Count() != expectedIndexCount ||
                 _primaryIndexMetadataPages.Any(entry =>
-                    entry.Value <= 1 || entry.Value >= BufferPool.PageCount ||
+                    entry.Value < Constants.FirstAllocatablePageId || entry.Value >= BufferPool.PageCount ||
                     !catalog.Schema.Tables.TryGetValue(entry.Key, out var table) ||
-                    !table.Columns.Any(column => column.IsPrimaryKey)))
+                    table.Columns.Count(column => column.IsPrimaryKey) != 1 ||
+                    table.Columns.Single(column => column.IsPrimaryKey).Type != "INTEGER"))
             {
                 throw new InvalidDataException(Constants.InvalidFileError);
             }
@@ -119,11 +135,21 @@ namespace Engine
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
             foreach (var index in _primaryIndexes.Values)
                 index.Dispose();
             _primaryIndexes.Clear();
             _bufferPool?.Dispose();
             _bufferPool = null;
+            _disposed = true;
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(Storage));
         }
 
         private void WriteCatalog(Schema schema)
@@ -135,13 +161,13 @@ namespace Engine
             };
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(catalog);
             if (payload.Length > BufferPool.PageSize - 8)
-                throw new InvalidOperationException(Constants.InvalidFileError);
+                throw new InvalidOperationException(Constants.CatalogTooLargeError);
 
             byte[] page = new byte[BufferPool.PageSize];
             CatalogMagic.CopyTo(page, 0);
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(4, sizeof(int)), payload.Length);
             payload.CopyTo(page, 8);
-            BufferPool.WritePage(1, page);
+            BufferPool.WritePage(Constants.CatalogPageId, page);
         }
 
         private sealed class StorageCatalog
