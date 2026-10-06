@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="BufferPool/**/*.cs;BPlusTree/**/*.cs;Pager/**/*.cs" />
+    <Compile Remove="Pager.cs;BufferPool/**/*.cs;BPlusTree/**/*.cs;Pager/**/*.cs" />
     <ProjectReference Include="..\Core\Engine.Core.csproj" />
     <ProjectReference Include="BufferPool\Engine.Storage.BufferPool.csproj" />
     <ProjectReference Include="BPlusTree\Engine.Storage.BPlusTree.csproj" />

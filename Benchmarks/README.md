@@ -3,7 +3,7 @@
 Run the comparison with:
 
 ```sh
-dotnet run --project ResilentDB.Benchmarks/ResilentDB.Benchmarks.csproj
+dotnet run --project Benchmarks/Benchmarks.csproj
 ```
 
 The benchmark creates a temporary database with 16,384 data pages (64 MiB), runs
