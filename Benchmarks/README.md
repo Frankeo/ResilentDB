@@ -1,28 +1,24 @@
-# Buffer Pool Benchmark
+# Benchmark de buffer pool
 
-Run the comparison with:
+## Objetivo
+
+Compara el coste de memoria y el tiempo de distintas políticas de acceso a páginas, aislando el `IBufferPool` del parser, los ejecutores y el B+Tree. No es un benchmark de consultas SQL ni una medición de rendimiento de producción.
+
+## Ejecutar
 
 ```sh
 dotnet run --project Benchmarks/Benchmarks.csproj
 ```
 
-The benchmark creates a temporary database with 16,384 data pages (64 MiB), runs
-20,000 pseudo-random page reads and 2,000 page updates, then compares:
+El programa crea una base temporal de 16 384 páginas de datos (64 MiB con páginas de 4096 bytes), realiza 20 000 lecturas pseudoaleatorias y 2 000 escrituras de página, y compara:
 
-- `Direct`: each page access goes through `Pager` without an application cache.
-- `FullCache`: all data pages are loaded into memory and dirty pages are flushed.
-- `LruCache`: pages are cached with an LRU limit of 256 pages.
-- `Clock`: pages use the second-chance Clock policy with a 256-page limit.
+- `Direct`: no conserva un frame reutilizable después de liberar el pin; accede mediante Pager.
+- `FullCache`: carga todas las páginas en memoria y escribe las dirty al hacer flush.
+- `LruCache`: mantiene un máximo de 256 páginas con reemplazo LRU.
+- `Clock`: mantiene 256 páginas con la política Clock de segunda oportunidad.
 
-Each mode runs in its own process. The output reports elapsed time, managed
-heap and working-set start/peak measurements, cache size, and a checksum that
-should match across modes. Initialization and workload durations are reported
-separately. Each mode runs five times in a rotated order, and the output shows
-medians to reduce noise and ordering bias. Initialization heap and RSS deltas
-show the memory cost of loading a cache before the workload begins.
+Cada modo corre en un proceso separado. Se reportan duración, heap administrado, working set al inicio y pico, tamaño de cache y checksum; el checksum debe coincidir entre modos. Inicialización y carga se miden por separado. Cada modo se ejecuta cinco veces en orden rotado y se muestran medianas para reducir variación y sesgo por orden.
 
-`Direct` means no application-level page cache; it does not bypass or clear the
-operating system's file cache. Results therefore compare these strategies under
-the host's normal filesystem caching behavior. This benchmark measures page
-access, not SQL-row operations: the current `DbEngine` loads its complete table
-snapshot in memory, so SQL workloads would not isolate page-cache behavior.
+## Interpretación
+
+`Direct` no limpia ni evita la cache de archivos del sistema operativo; los resultados incluyen el comportamiento normal del filesystem del host. La carga sintética opera directamente sobre páginas para comparar estrategias de cache. Una prueba SQL incluiría además parsing, ejecución, serialización, árbol y catálogo, así que no permitiría atribuir el coste únicamente al buffer pool.
