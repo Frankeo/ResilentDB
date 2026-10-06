@@ -38,6 +38,22 @@ flowchart TD
 
 `Engine.Core` contiene modelos, AST, resultados tipados y los contratos `IExecutionContext`/`IPrimaryKeyIndex`. `Engine` es la fachada pública: crea Storage, carga el esquema, valida índices y conecta Parser con Executors. Las bibliotecas pueden compilarse y estudiarse por separado.
 
+## Guías por componente
+
+Para profundizar en una parte concreta, cada proyecto tiene una guía propia:
+
+- [Pager y formato de archivo paginado](Engine/Storage/Pager/README.md): cabecera, IDs, offsets, lectura y asignación de páginas.
+- [Buffer pool y políticas de reemplazo](Engine/Storage/BufferPool/README.md): pins, dirty pages, Clock, LRU, Direct y FullCache.
+- [B+Tree paginado](Engine/Storage/BPlusTree/README.md): búsqueda, range scans, split/merge, overflow pages y free list.
+- [Storage y catálogo](Engine/Storage/README.md): mapa de tablas a índices, validación y orden de persistencia.
+- [Parser y AST](Engine/Parser/README.md): gramática soportada y estrategia de análisis.
+- [Ejecución de sentencias](Engine/Executors/README.md): dispatcher, validaciones y uso del índice por los ejecutores.
+- [Contratos y modelos compartidos](Engine/Core/README.md): AST, resultados tipados e interfaces entre módulos.
+- [Fachada del motor](Engine/README.md): ciclo de vida y coordinación de los proyectos.
+- [CLI](Cli/README.md): interacción, comandos y presentación de resultados.
+- [Tests](UnitTests/README.md): cobertura y ejecución de la suite.
+- [Benchmark](Benchmarks/README.md): metodología y comparación de políticas de caché.
+
 ## Decisiones de diseño
 
 ### Páginas y Pager
