@@ -107,7 +107,7 @@ public sealed partial class PagedPrimaryKeyBPlusTree
         if (index + 1 < parent.Children.Count)
         {
             int rightId = parent.Children[index + 1]; var right = ReadLeaf(rightId);
-            if (right.Entries.Count > MinimumLeafKeys) { leaf.Entries.Add(right.Entries[0]); right.Entries.RemoveAt(0); parent.Keys[index] = right.Entries[0].Key; WriteLeaf(leafPageId, leaf); WriteLeaf(rightId, right); WriteInternal(parentPath.PageId, parent); return; }
+            if (right.Entries.Count > MinimumLeafKeys) { leaf.Entries.Add(right.Entries[0]); right.Entries.RemoveAt(0); parent.Keys[index] = right.Entries[0].Key; WriteLeaf(leafPageId, leaf); WriteLeaf(rightId, right); WriteInternal(parentPath.PageId, parent); if (index == 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key); return; }
         }
         if (index > 0)
         {
@@ -116,6 +116,7 @@ public sealed partial class PagedPrimaryKeyBPlusTree
         else
         {
             int rightId = parent.Children[index + 1]; var right = ReadLeaf(rightId); leaf.Entries.AddRange(right.Entries); leaf.NextPageId = right.NextPageId; WriteLeaf(leafPageId, leaf); FreeTreePage(rightId); parent.Children.RemoveAt(index + 1); parent.Keys.RemoveAt(index);
+            if (index == 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key);
         }
         RebalanceInternal(parentPath.PageId, parent, path);
     }
