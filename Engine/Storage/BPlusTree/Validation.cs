@@ -1,8 +1,8 @@
-using Constants = Engine.BPlusTree.Constants;
+using Constants = Engine.BPlusTreeConfig.Constants;
 
 namespace Engine;
 
-public sealed partial class PagedPrimaryKeyBPlusTree
+public sealed partial class BPlusTree
 {
     private (long? Minimum, long? Maximum) ValidateNode(
         int pageId, int depth, bool isRoot, List<int> leafPages,

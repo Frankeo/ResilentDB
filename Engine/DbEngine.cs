@@ -52,7 +52,7 @@ namespace Engine
             _disposed = true;
         }
 
-        internal PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName)
+        internal BPlusTree OpenPrimaryIndex(string tableName)
         {
             ThrowIfDisposed();
             return _storage.OpenPrimaryIndex(tableName);

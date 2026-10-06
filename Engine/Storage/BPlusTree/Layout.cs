@@ -1,10 +1,10 @@
 using System.Buffers.Binary;
 using System.Text;
-using Constants = Engine.BPlusTree.Constants;
+using Constants = Engine.BPlusTreeConfig.Constants;
 
 namespace Engine;
 
-public sealed partial class PagedPrimaryKeyBPlusTree
+public sealed partial class BPlusTree
 {
     private const int DefaultMetadataPageId = Constants.DefaultMetadataPageId;
     private const int NodeHeaderSize = 9;
@@ -43,6 +43,6 @@ public sealed partial class PagedPrimaryKeyBPlusTree
     private void ThrowIfDisposed()
     {
         if (_disposed)
-            throw new ObjectDisposedException(nameof(PagedPrimaryKeyBPlusTree));
+            throw new ObjectDisposedException(nameof(BPlusTree));
     }
 }

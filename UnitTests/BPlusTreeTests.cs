@@ -5,7 +5,7 @@ using Xunit;
 
 namespace UnitTests;
 
-public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
+public sealed class BPlusTreeTests : EngineTestBase
 {
     [Fact]
     public void SplitsScansDeletesAndReloads()
@@ -13,7 +13,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
         var indexPath = $"{DatabasePath}.tree.idx";
         try
         {
-            using (var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
+            using (var tree = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
             {
                 foreach (long key in Enumerable.Range(0, 64)
                              .OrderBy(value => (value * 37) % 64)
@@ -35,7 +35,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
                     tree.Scan().Select(entry => (int)entry.Key));
             }
 
-            using var reloaded = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 32, bufferPoolCapacity: 2);
+            using var reloaded = new BPlusTree(indexPath, maxKeys: 32, bufferPoolCapacity: 2);
             reloaded.Validate();
             Assert.Equal(32, reloaded.Count);
             Assert.True(reloaded.TryGetValue(63, out var persistedValue));
@@ -55,7 +55,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
         try
         {
             var largeBody = new string('x', PagerConstants.DefaultPageSize * 2);
-            using (var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
+            using (var tree = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
             {
                 tree.InsertRecord(1, new Row
                 {
@@ -73,7 +73,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
                 tree.Validate();
             }
 
-            using var reloaded = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+            using var reloaded = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
             Assert.True(reloaded.TryGetRecord(2, out var persistedRow));
             Assert.Equal(largeBody, persistedRow!.Values["body"].ToString());
         }
@@ -90,7 +90,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
         var indexPath = $"{DatabasePath}.rebalance.idx";
         try
         {
-            using var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+            using var tree = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
             for (long key = 1; key <= 64; key++)
                 tree.Insert(key, key);
 
@@ -124,7 +124,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
         var random = new Random(84521);
         try
         {
-            using (var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
+            using (var tree = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
             {
                 for (int operation = 0; operation < 500; operation++)
                 {
@@ -164,7 +164,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
                 }
             }
 
-            using var reloaded = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+            using var reloaded = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
             reloaded.Validate();
             Assert.Equal(expected, reloaded.Scan().ToDictionary(pair => pair.Key, pair => pair.Value));
         }
@@ -182,7 +182,7 @@ public sealed class PagedPrimaryKeyBPlusTreeTests : EngineTestBase
         try
         {
             var largeBody = new string('x', PagerConstants.DefaultPageSize * 2);
-            using var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
+            using var tree = new BPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
             tree.InsertRecord(1, new Row
             {
                 Values = new Dictionary<string, object> { ["id"] = 1, ["body"] = largeBody }

@@ -1,8 +1,8 @@
-using Constants = Engine.BPlusTree.Constants;
+using Constants = Engine.BPlusTreeConfig.Constants;
 
 namespace Engine;
 
-public sealed partial class PagedPrimaryKeyBPlusTree
+public sealed partial class BPlusTree
 {
     private void WriteLeaf(int pageId, LeafNode node)
     {

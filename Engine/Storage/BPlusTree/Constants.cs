@@ -1,4 +1,4 @@
-namespace Engine.BPlusTree;
+namespace Engine.BPlusTreeConfig;
 
 internal static class Constants
 {

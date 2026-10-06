@@ -12,7 +12,7 @@ namespace Engine
         private static readonly byte[] CatalogMagic = Encoding.ASCII.GetBytes("RDC4");
         private readonly string _filePath;
         private Dictionary<string, int> _primaryIndexMetadataPages = new();
-        private readonly Dictionary<string, PagedPrimaryKeyBPlusTree> _primaryIndexes =
+        private readonly Dictionary<string, BPlusTree> _primaryIndexes =
             new(StringComparer.OrdinalIgnoreCase);
         private ClockBufferPool? _bufferPool;
         private bool _disposed;
@@ -93,7 +93,7 @@ namespace Engine
             BufferPool.Flush();
         }
 
-        public PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName)
+        public BPlusTree OpenPrimaryIndex(string tableName)
         {
             if (_primaryIndexes.TryGetValue(tableName, out var index))
                 return index;
@@ -101,7 +101,7 @@ namespace Engine
             if (!_primaryIndexMetadataPages.TryGetValue(tableName, out int metadataPageId))
                 throw new InvalidDataException(Constants.InvalidFileError);
 
-            index = PagedPrimaryKeyBPlusTree.Open(
+            index = BPlusTree.Open(
                 BufferPool,
                 metadataPageId,
                 Constants.DefaultBPlusTreeMaxKeys);
@@ -126,7 +126,7 @@ namespace Engine
             if (_primaryIndexMetadataPages.ContainsKey(tableName))
                 throw new InvalidDataException(Constants.InvalidFileError);
 
-            var index = PagedPrimaryKeyBPlusTree.CreateOnBufferPool(
+            var index = BPlusTree.CreateOnBufferPool(
                 BufferPool,
                 Constants.DefaultBPlusTreeMaxKeys);
             _primaryIndexes.Add(tableName, index);

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Buffers.Binary;
 using Engine.BufferPool;
-using Constants = Engine.BPlusTree.Constants;
+using Constants = Engine.BPlusTreeConfig.Constants;
 using BufferPoolConstants = Engine.BufferPool.Constants;
 
 namespace Engine;
@@ -12,7 +12,7 @@ public readonly record struct PageId(int Value)
     public bool IsValid => Value >= Constants.FirstAllocatablePageId;
 }
 
-public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable, IPrimaryKeyIndex
+public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
 {
     private readonly IBufferPool _bufferPool;
     private int _maxKeys;
@@ -25,13 +25,13 @@ public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable, IPrimaryKeyI
     private long _count;
     private bool _disposed;
 
-    public PagedPrimaryKeyBPlusTree(string filePath, int maxKeys = Constants.DefaultMaxKeys, int bufferPoolCapacity = BufferPoolConstants.DefaultBufferPoolCapacity)
+    public BPlusTree(string filePath, int maxKeys = Constants.DefaultMaxKeys, int bufferPoolCapacity = BufferPoolConstants.DefaultBufferPoolCapacity)
         : this(new ClockBufferPool(filePath, bufferPoolCapacity), DefaultMetadataPageId, maxKeys, true, false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
     }
 
-    private PagedPrimaryKeyBPlusTree(IBufferPool bufferPool, int metadataPageId, int maxKeys, bool ownsBufferPool, bool initializeNew)
+    private BPlusTree(IBufferPool bufferPool, int metadataPageId, int maxKeys, bool ownsBufferPool, bool initializeNew)
     {
         if (maxKeys < 3) throw new ArgumentOutOfRangeException(nameof(maxKeys));
         _bufferPool = bufferPool;
@@ -52,12 +52,12 @@ public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable, IPrimaryKeyI
     }
 
     internal int MetadataPageId => _metadataPageId;
-    internal static PagedPrimaryKeyBPlusTree CreateOnBufferPool(IBufferPool bufferPool, int maxKeys)
+    internal static BPlusTree CreateOnBufferPool(IBufferPool bufferPool, int maxKeys)
     {
         int metadataPageId = bufferPool.AllocatePage();
-        return new PagedPrimaryKeyBPlusTree(bufferPool, metadataPageId, maxKeys, false, true);
+        return new BPlusTree(bufferPool, metadataPageId, maxKeys, false, true);
     }
-    internal static PagedPrimaryKeyBPlusTree Open(IBufferPool bufferPool, int metadataPageId, int maxKeys) => new(bufferPool, metadataPageId, maxKeys, false, false);
+    internal static BPlusTree Open(IBufferPool bufferPool, int metadataPageId, int maxKeys) => new(bufferPool, metadataPageId, maxKeys, false, false);
 
     public long Count { get { lock (_sync) { ThrowIfDisposed(); return _count; } } }
     public PageId RootPageId { get { lock (_sync) { ThrowIfDisposed(); return new PageId(_rootPageId); } } }

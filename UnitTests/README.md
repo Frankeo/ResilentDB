@@ -8,7 +8,7 @@ Suite xUnit para aprender y comprobar invariantes por capa, desde texto SQL hast
 
 - `ParserTests`: reconocimiento de AST, clave primaria y valores con comas entre comillas.
 - `EngineExecutionTests`: CRUD, filtros, resultados tipados, errores y ciclo de vida de `DbEngine`.
-- `PagedPrimaryKeyBPlusTreeTests`: splits, scans, persistencia, overflow, rebalanceo, free list y comparación aleatoria con `SortedDictionary`.
+- `BPlusTreeTests`: splits, scans, persistencia, overflow, rebalanceo, free list y comparación aleatoria con `SortedDictionary`.
 - `BufferPoolTests`: Pager, eviction LRU/Clock, FullCache, dirty pages, pins, PageHandle y acceso concurrente.
 - `StorageTests`: persistencia de payloads que ocupan varias páginas y superan la capacidad del buffer pool.
 - `PrimaryIndexIntegrationTests`: CRUD de clave primaria atravesando parser, ejecutores, Storage y B+Tree.

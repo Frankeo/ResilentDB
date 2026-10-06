@@ -1,8 +1,8 @@
-using Constants = Engine.BPlusTree.Constants;
+using Constants = Engine.BPlusTreeConfig.Constants;
 
 namespace Engine;
 
-public sealed partial class PagedPrimaryKeyBPlusTree
+public sealed partial class BPlusTree
 {
     private bool RequiresSplit(LeafNode leaf) => leaf.Entries.Count > _maxKeys || leaf.Entries.Sum(GetLeafEntrySize) > _bufferPool.PageSize - NodeHeaderSize;
     private static int GetLeafEntrySize(LeafEntry entry) => entry.OverflowHeadPageId > 0 ? LeafOverflowEntrySize : LeafEntryHeaderSize + entry.Payload.Length;
