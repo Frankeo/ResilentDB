@@ -6,7 +6,7 @@ public sealed class UpdateExecutor : ExecutorBase
 {
     public override bool CanExecute(Statement statement) => statement is UpdateStatement;
 
-    public override object Execute(DbEngine engine, Statement statement)
+    public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var update = (UpdateStatement)statement;
         if (!engine.Schema.Tables.TryGetValue(update.TableName, out var table))
@@ -76,6 +76,8 @@ public sealed class UpdateExecutor : ExecutorBase
         }
 
         engine.Save();
-        return string.Format(Constants.UpdatedRowsMessage, affectedRows.Count);
+        return new CommandResult(
+            affectedRows.Count,
+            string.Format(Constants.UpdatedRowsMessage, affectedRows.Count));
     }
 }

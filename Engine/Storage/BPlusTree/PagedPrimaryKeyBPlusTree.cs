@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Buffers.Binary;
 using Engine.BufferPool;
+using Constants = Engine.BPlusTree.Constants;
+using BufferPoolConstants = Engine.BufferPool.Constants;
 
 namespace Engine;
 
@@ -10,7 +12,7 @@ public readonly record struct PageId(int Value)
     public bool IsValid => Value >= Constants.FirstAllocatablePageId;
 }
 
-public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable
+public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable, IPrimaryKeyIndex
 {
     private readonly IBufferPool _bufferPool;
     private int _maxKeys;
@@ -23,7 +25,7 @@ public sealed partial class PagedPrimaryKeyBPlusTree : IDisposable
     private long _count;
     private bool _disposed;
 
-    public PagedPrimaryKeyBPlusTree(string filePath, int maxKeys = 32, int bufferPoolCapacity = Constants.DefaultBufferPoolCapacity)
+    public PagedPrimaryKeyBPlusTree(string filePath, int maxKeys = Constants.DefaultMaxKeys, int bufferPoolCapacity = BufferPoolConstants.DefaultBufferPoolCapacity)
         : this(new ClockBufferPool(filePath, bufferPoolCapacity), DefaultMetadataPageId, maxKeys, true, false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);

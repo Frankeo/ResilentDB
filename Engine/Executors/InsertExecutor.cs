@@ -6,7 +6,7 @@ public sealed class InsertExecutor : ExecutorBase
 {
     public override bool CanExecute(Statement statement) => statement is InsertStatement;
 
-    public override object Execute(DbEngine engine, Statement statement)
+    public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var stmt = (InsertStatement)statement;
 
@@ -41,6 +41,6 @@ public sealed class InsertExecutor : ExecutorBase
         index.InsertRecord(key, row);
 
         engine.Save();
-        return Constants.InsertSuccessMessage;
+        return new CommandResult(1, Constants.InsertSuccessMessage);
     }
 }

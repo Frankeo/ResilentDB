@@ -6,4 +6,12 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="Core/**/*.cs;Executors/**/*.cs;Parser/**/*.cs;Storage/**/*.cs" />
+    <ProjectReference Include="Core\Engine.Core.csproj" />
+    <ProjectReference Include="Parser\Engine.Parser.csproj" />
+    <ProjectReference Include="Executors\Engine.Executors.csproj" />
+    <ProjectReference Include="Storage\Engine.Storage.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="BufferPool/**/*.cs;BPlusTree/**/*.cs;Pager/**/*.cs" />
+    <ProjectReference Include="..\Core\Engine.Core.csproj" />
+    <ProjectReference Include="BufferPool\Engine.Storage.BufferPool.csproj" />
+    <ProjectReference Include="BPlusTree\Engine.Storage.BPlusTree.csproj" />
+  </ItemGroup>
+</Project>

@@ -6,7 +6,7 @@ public sealed class DeleteExecutor : ExecutorBase
 {
     public override bool CanExecute(Statement statement) => statement is DeleteStatement;
 
-    public override object Execute(DbEngine engine, Statement statement)
+    public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var delete = (DeleteStatement)statement;
         if (!engine.Schema.Tables.TryGetValue(delete.TableName, out var table))
@@ -26,7 +26,9 @@ public sealed class DeleteExecutor : ExecutorBase
         }
 
         engine.Save();
-        return string.Format(Constants.DeletedRowsMessage, rowsToDelete.Count);
+        return new CommandResult(
+            rowsToDelete.Count,
+            string.Format(Constants.DeletedRowsMessage, rowsToDelete.Count));
     }
 
 }

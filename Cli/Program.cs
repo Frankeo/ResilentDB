@@ -1,29 +1,30 @@
 ﻿using Engine;
+using CliConstants = ResilentDB.Cli.Constants;
 
-using var engine = new DbEngine(Constants.DatabaseFileName);
+using var engine = new DbEngine(CliConstants.DatabaseFileName);
 
-Console.WriteLine(Constants.StartupBanner);
-Console.WriteLine(Constants.CliCommands);
-Console.WriteLine(Constants.CliExitInstructions);
+Console.WriteLine(CliConstants.StartupBanner);
+Console.WriteLine(CliConstants.CliCommands);
+Console.WriteLine(CliConstants.CliExitInstructions);
 
 while (true)
 {
-    Console.Write(Constants.CliPrompt);
+    Console.Write(CliConstants.CliPrompt);
     var line = Console.ReadLine();
     if (line == null) break;
     line = line.Trim();
     if (line.Length == 0) continue;
-    if (line == Constants.CliExitCommand)
+    if (line == CliConstants.CliExitCommand)
         break;
 
     try
     {
-        if (line.Equals(Constants.CliReadCommand, StringComparison.OrdinalIgnoreCase) ||
-            line.StartsWith(Constants.CliReadCommand + " ", StringComparison.OrdinalIgnoreCase))
+        if (line.Equals(CliConstants.CliReadCommand, StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith(CliConstants.CliReadCommand + " ", StringComparison.OrdinalIgnoreCase))
         {
-            var sqlFilePath = line[Constants.CliReadCommand.Length..].Trim();
+            var sqlFilePath = line[CliConstants.CliReadCommand.Length..].Trim();
             if (sqlFilePath.Length == 0)
-                throw new ArgumentException(Constants.CliReadUsageError);
+                throw new ArgumentException(CliConstants.CliReadUsageError);
 
             if ((sqlFilePath.StartsWith('"') && sqlFilePath.EndsWith('"')) ||
                 (sqlFilePath.StartsWith('\'') && sqlFilePath.EndsWith('\'')))
@@ -36,31 +37,30 @@ while (true)
 
         foreach (var res in engine.Execute(line))
         {
-            if (res is List<Row> rows)
+            if (res is QueryResult query)
             {
-                if (rows.Count == 0)
+                if (query.Rows.Count == 0)
                 {
-                    Console.WriteLine(Constants.CliEmptyResult);
+                    Console.WriteLine(CliConstants.CliEmptyResult);
                 }
                 else
                 {
-                    // Imprimir cabecera
-                    var cols = rows[0].Values.Keys.ToList();
-                    Console.WriteLine(string.Join(Constants.CliColumnSeparator, cols));
+                    var cols = query.Columns;
+                    Console.WriteLine(string.Join(CliConstants.CliColumnSeparator, cols));
                     Console.WriteLine(string.Join(
-                        Constants.CliRuleSeparator,
-                        cols.Select(c => new string(Constants.CliRuleCharacter, c.Length + Constants.CliColumnPadding))));
+                        CliConstants.CliRuleSeparator,
+                        cols.Select(c => new string(CliConstants.CliRuleCharacter, c.Length + CliConstants.CliColumnPadding))));
 
-                    foreach (var row in rows)
+                    foreach (var row in query.Rows)
                     {
-                        var vals = cols.Select(c => row.Values[c].ToString() ?? Constants.CliNullValue);
-                        Console.WriteLine(string.Join(Constants.CliColumnSeparator, vals));
+                        var vals = row.Select(value => value?.ToString() ?? CliConstants.CliNullValue);
+                        Console.WriteLine(string.Join(CliConstants.CliColumnSeparator, vals));
                     }
                 }
             }
-            else if (res is string msg)
+            else if (res is CommandResult command)
             {
-                Console.WriteLine(msg);
+                Console.WriteLine(command.Message);
             }
             else
             {
@@ -70,6 +70,6 @@ while (true)
     }
     catch (Exception ex)
     {
-        Console.WriteLine(Constants.CliErrorPrefix + ex.Message);
+        Console.WriteLine(CliConstants.CliErrorPrefix + ex.Message);
     }
 }

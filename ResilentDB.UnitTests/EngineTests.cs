@@ -1,5 +1,7 @@
 using Engine;
 using Engine.BufferPool;
+using BufferPoolConstants = Engine.BufferPool.Constants;
+using PagerConstants = Engine.PagerConfig.Constants;
 using Xunit;
 
 namespace ResilentDB.UnitTests;
@@ -56,16 +58,20 @@ public sealed class EngineTests : IDisposable
             engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
             engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
 
-            Assert.Equal(
-                "Filas actualizadas: 1",
+            var updateResult = Assert.IsType<CommandResult>(
                 engine.Execute(Parser.Parse("UPDATE users SET name = 'Carlos', age = 30 WHERE id = 1")));
+            Assert.Equal(1, updateResult.AffectedRows);
+            Assert.Equal("Filas actualizadas: 1", updateResult.Message);
             Assert.Throws<Exception>(() =>
                 engine.Execute(Parser.Parse("UPDATE users SET id = 2 WHERE id = 1")));
             Assert.Throws<Exception>(() =>
                 engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Duplicado', 20)")));
 
-            Assert.Equal("Filas eliminadas: 1", engine.Execute(Parser.Parse("DELETE FROM users WHERE age < 18")));
-            var rows = Assert.IsType<List<Row>>(engine.Execute(Parser.Parse("SELECT * FROM users")));
+            var deleteResult = Assert.IsType<CommandResult>(
+                engine.Execute(Parser.Parse("DELETE FROM users WHERE age < 18")));
+            Assert.Equal(1, deleteResult.AffectedRows);
+            Assert.Equal("Filas eliminadas: 1", deleteResult.Message);
+            var rows = ReadRows(engine.Execute(Parser.Parse("SELECT * FROM users")));
             var row = Assert.Single(rows);
             Assert.Equal(1, row.Values["id"]);
             Assert.Equal("Carlos", row.Values["name"]);
@@ -170,7 +176,7 @@ public sealed class EngineTests : IDisposable
             var indexPath = $"{_databasePath}.row-tree.idx";
             try
             {
-                var largeBody = new string('x', Constants.DefaultPageSize * 2);
+                var largeBody = new string('x', PagerConstants.DefaultPageSize * 2);
                 using (var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2))
                 {
                     tree.InsertRecord(1, new Row
@@ -312,7 +318,7 @@ public sealed class EngineTests : IDisposable
             var indexPath = $"{_databasePath}.overflow.idx";
             try
             {
-                var largeBody = new string('x', Constants.DefaultPageSize * 2);
+                var largeBody = new string('x', PagerConstants.DefaultPageSize * 2);
                 using var tree = new PagedPrimaryKeyBPlusTree(indexPath, maxKeys: 3, bufferPoolCapacity: 2);
                 tree.InsertRecord(1, new Row
                 {
@@ -374,11 +380,12 @@ public sealed class EngineTests : IDisposable
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (1, 'Ana', 28)"));
         engine.Execute(Parser.Parse("INSERT INTO users VALUES (2, 'Luis', 16)"));
 
-        var rows = Assert.IsType<List<Row>>(
+        var query = Assert.IsType<QueryResult>(
             engine.Execute(Parser.Parse("SELECT name FROM users WHERE age > 18")));
 
-        var row = Assert.Single(rows);
-        Assert.Equal("Ana", row.Values["name"]);
+        Assert.Equal(new[] { "name" }, query.Columns);
+        var row = Assert.Single(query.Rows);
+        Assert.Equal("Ana", row[0]);
     }
 
     [Fact]
@@ -394,12 +401,12 @@ public sealed class EngineTests : IDisposable
         var results = engine.Execute(sql);
 
         Assert.Equal(5, results.Count);
-        Assert.Equal("Tabla creada", results[0]);
-        Assert.Equal("1 fila insertada", results[1]);
-        Assert.Equal("1 fila insertada", results[2]);
-        Assert.Equal("1 fila insertada", results[3]);
+        Assert.Equal("Tabla creada", Assert.IsType<CommandResult>(results[0]).Message);
+        Assert.Equal("1 fila insertada", Assert.IsType<CommandResult>(results[1]).Message);
+        Assert.Equal("1 fila insertada", Assert.IsType<CommandResult>(results[2]).Message);
+        Assert.Equal("1 fila insertada", Assert.IsType<CommandResult>(results[3]).Message);
 
-        var rows = Assert.IsType<List<Row>>(results[4]);
+        var rows = ReadRows(results[4]);
         Assert.Equal(3, rows.Count);
         Assert.Equal("Sam; Smith", rows[2].Values["name"]);
     }
@@ -425,7 +432,7 @@ public sealed class EngineTests : IDisposable
 
         engine.Dispose();
         using var reloadedEngine = new DbEngine(_databasePath);
-        var rows = Assert.IsType<List<Row>>(
+        var rows = ReadRows(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM users")));
 
         var row = Assert.Single(rows);
@@ -691,7 +698,7 @@ public sealed class EngineTests : IDisposable
     {
         using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
-        var expectedBody = new string('x', Constants.DefaultPageSize * 3);
+        var expectedBody = new string('x', PagerConstants.DefaultPageSize * 3);
         engine.Execute(new InsertStatement
         {
             TableName = "documents",
@@ -700,12 +707,12 @@ public sealed class EngineTests : IDisposable
 
         engine.Dispose();
         using var reloadedEngine = new DbEngine(_databasePath);
-        var rows = Assert.IsType<List<Row>>(
+        var rows = ReadRows(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
 
         var row = Assert.Single(rows);
         Assert.Equal(expectedBody, row.Values["body"].ToString());
-        Assert.True(new FileInfo(_databasePath).Length > Constants.DefaultPageSize * 3);
+        Assert.True(new FileInfo(_databasePath).Length > PagerConstants.DefaultPageSize * 3);
     }
 
     [Fact]
@@ -713,7 +720,7 @@ public sealed class EngineTests : IDisposable
     {
         using var engine = new DbEngine(_databasePath);
         engine.Execute(Parser.Parse("CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT)"));
-        var expectedBody = new string('x', Constants.DefaultPageSize * (Constants.DefaultBufferPoolCapacity + 2));
+        var expectedBody = new string('x', PagerConstants.DefaultPageSize * (BufferPoolConstants.DefaultBufferPoolCapacity + 2));
         engine.Execute(new InsertStatement
         {
             TableName = "documents",
@@ -722,13 +729,13 @@ public sealed class EngineTests : IDisposable
 
         engine.Dispose();
         using var reloadedEngine = new DbEngine(_databasePath);
-        var rows = Assert.IsType<List<Row>>(
+        var rows = ReadRows(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM documents")));
 
         var row = Assert.Single(rows);
         Assert.Equal(expectedBody, row.Values["body"].ToString());
         Assert.True(new FileInfo(_databasePath).Length >
-            Constants.DefaultPageSize * Constants.DefaultBufferPoolCapacity);
+            PagerConstants.DefaultPageSize * BufferPoolConstants.DefaultBufferPoolCapacity);
     }
 
     [Fact]
@@ -740,31 +747,43 @@ public sealed class EngineTests : IDisposable
         for (int id = 1; id <= 70; id++)
             engine.Execute(Parser.Parse($"INSERT INTO users VALUES ({id}, 'user-{id}')"));
 
-        var selected = Assert.IsType<List<Row>>(
+        var selected = ReadRows(
             engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 37")));
         Assert.Equal("user-37", Assert.Single(selected).Values["name"].ToString());
 
-        selected = Assert.IsType<List<Row>>(
+        selected = ReadRows(
             engine.Execute(Parser.Parse("SELECT * FROM users WHERE id > 67")));
         Assert.Equal(new[] { "user-68", "user-69", "user-70" },
             selected.Select(row => row.Values["name"].ToString()));
 
         engine.Execute(Parser.Parse("UPDATE users SET id = 170 WHERE id = 70"));
-        selected = Assert.IsType<List<Row>>(
+        selected = ReadRows(
             engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 170")));
         Assert.Equal("user-70", Assert.Single(selected).Values["name"].ToString());
 
         engine.Execute(Parser.Parse("DELETE FROM users WHERE id = 170"));
-        Assert.Empty(Assert.IsType<List<Row>>(
+        Assert.Empty(ReadRows(
             engine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 170"))));
 
         engine.Dispose();
         using var reloadedEngine = new DbEngine(_databasePath);
-        selected = Assert.IsType<List<Row>>(
+        selected = ReadRows(
             reloadedEngine.Execute(Parser.Parse("SELECT * FROM users WHERE id = 37")));
         Assert.Equal("user-37", Assert.Single(selected).Values["name"].ToString());
         Assert.Throws<Exception>(() =>
             reloadedEngine.Execute(Parser.Parse("INSERT INTO users VALUES (37, 'duplicate')")));
+    }
+
+    private static List<Row> ReadRows(ExecutionResult result)
+    {
+        var query = Assert.IsType<QueryResult>(result);
+        return query.Rows.Select(values =>
+        {
+            var row = new Row();
+            for (int columnIndex = 0; columnIndex < query.Columns.Count; columnIndex++)
+                row.Values[query.Columns[columnIndex]] = values[columnIndex]!;
+            return row;
+        }).ToList();
     }
 
     public void Dispose()

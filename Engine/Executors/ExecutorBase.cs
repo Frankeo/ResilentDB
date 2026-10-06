@@ -6,7 +6,7 @@ namespace Engine.Executors;
 public abstract class ExecutorBase : IExecutor
 {
     public abstract bool CanExecute(Statement statement);
-    public abstract object Execute(DbEngine engine, Statement statement);
+    public abstract ExecutionResult Execute(IExecutionContext engine, Statement statement);
 
     protected static void ValidateWhereClause(TableDef table, WhereClause? where)
     {
@@ -22,7 +22,7 @@ public abstract class ExecutorBase : IExecutor
     }
 
     protected static List<Row> FindMatchingRows(
-        DbEngine engine,
+        IExecutionContext engine,
         string tableName,
         TableDef table,
         WhereClause? where)

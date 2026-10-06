@@ -2,7 +2,7 @@ using Engine.Executors;
 
 namespace Engine
 {
-    public class DbEngine : IDisposable
+    public class DbEngine : IDisposable, IExecutionContext
     {
         private readonly ExecutionDispatcher _executionDispatcher = new();
         private readonly Storage _storage;
@@ -10,6 +10,7 @@ namespace Engine
         private bool _disposed;
 
         internal Schema Schema => _schema;
+        Schema IExecutionContext.Schema => _schema;
 
         public DbEngine(string filePath)
         {
@@ -35,7 +36,9 @@ namespace Engine
             _storage.Save(_schema);
         }
 
-        public object Execute(Statement stmt)
+        void IExecutionContext.Save() => Save();
+
+        public ExecutionResult Execute(Statement stmt)
         {
             ThrowIfDisposed();
             return _executionDispatcher.Execute(this, stmt);
@@ -55,13 +58,25 @@ namespace Engine
             return _storage.OpenPrimaryIndex(tableName);
         }
 
+        IPrimaryKeyIndex IExecutionContext.OpenPrimaryIndex(string tableName)
+        {
+            ThrowIfDisposed();
+            return _storage.OpenPrimaryIndex(tableName);
+        }
+
         internal void CreatePrimaryIndex(string tableName)
         {
             ThrowIfDisposed();
             _storage.CreatePrimaryIndex(tableName, _schema);
         }
 
-        public IReadOnlyList<object> Execute(string sql)
+        void IExecutionContext.CreatePrimaryIndex(string tableName)
+        {
+            ThrowIfDisposed();
+            _storage.CreatePrimaryIndex(tableName, _schema);
+        }
+
+        public IReadOnlyList<ExecutionResult> Execute(string sql)
         {
             ThrowIfDisposed();
             return Parser.ParseStatements(sql)

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using Engine.BufferPool;
 using Engine;
+using PagerConstants = Engine.PagerConfig.Constants;
 
 const int dataPageCount = 16384;
 const int readOperations = 20000;
@@ -38,7 +39,7 @@ try
     var results = modes.ToDictionary(mode => mode, _ => new List<BenchmarkResult>());
 
     Console.WriteLine("Buffer pool memory benchmark");
-    Console.WriteLine($"Data pages: {dataPageCount} ({dataPageCount * Constants.DefaultPageSize / 1024 / 1024} MiB)");
+    Console.WriteLine($"Data pages: {dataPageCount} ({dataPageCount * PagerConstants.DefaultPageSize / 1024 / 1024} MiB)");
     Console.WriteLine($"Reads: {readOperations:N0}; writes: {writeOperations:N0}; cache capacity: {cacheCapacity} pages");
     Console.WriteLine($"Independent process runs per mode: {repetitions}; output uses medians");
     Console.WriteLine();

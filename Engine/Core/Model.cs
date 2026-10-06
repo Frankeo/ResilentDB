@@ -1,10 +1,9 @@
 namespace Engine
 {
-
     public class ColumnDef
     {
         public string Name { get; set; } = "";
-        public string Type { get; set; } = ""; // "INTEGER" o "TEXT"
+        public string Type { get; set; } = "";
         public bool IsPrimaryKey { get; set; }
     }
 
@@ -24,7 +23,13 @@ namespace Engine
         public Dictionary<string, object> Values { get; set; } = new();
     }
 
-    // AST (estructuras para los comandos parseados)
+    public abstract record ExecutionResult;
+
+    public sealed record CommandResult(int AffectedRows, string Message) : ExecutionResult;
+
+    public sealed record QueryResult(
+        IReadOnlyList<string> Columns,
+        IReadOnlyList<IReadOnlyList<object?>> Rows) : ExecutionResult;
 
     public abstract class Statement { }
 
@@ -43,7 +48,7 @@ namespace Engine
     public class SelectStatement : Statement
     {
         public string TableName { get; set; } = "";
-        public List<string> Columns { get; set; } = new(); // ["*"] o ["id","nombre"]
+        public List<string> Columns { get; set; } = new();
         public WhereClause? Where { get; set; }
     }
 
@@ -63,7 +68,7 @@ namespace Engine
     public class WhereClause
     {
         public string Column { get; set; } = "";
-        public string Op { get; set; } = "="; // "=", ">", "<", etc.
+        public string Op { get; set; } = "=";
         public object Value { get; set; } = "";
     }
 }

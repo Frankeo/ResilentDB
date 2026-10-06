@@ -148,6 +148,7 @@ public sealed class ClockBufferPool : IBufferPool
         {
             ThrowIfDisposed();
             FlushAll();
+            _pager.Flush();
         }
     }
 

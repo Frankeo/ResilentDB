@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
 using Engine.BufferPool;
+using Constants = Engine.StorageConfig.Constants;
 
 namespace Engine
 {
@@ -87,11 +88,12 @@ namespace Engine
 
         public void Save(Schema schema)
         {
+            BufferPool.Flush();
             WriteCatalog(schema);
             BufferPool.Flush();
         }
 
-        internal PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName)
+        public PagedPrimaryKeyBPlusTree OpenPrimaryIndex(string tableName)
         {
             if (_primaryIndexes.TryGetValue(tableName, out var index))
                 return index;
@@ -107,7 +109,7 @@ namespace Engine
             return index;
         }
 
-        internal void ValidatePrimaryIndexes(Schema schema)
+        public void ValidatePrimaryIndexes(Schema schema)
         {
             foreach (var (tableName, tableDefinition) in schema.Tables)
             {
@@ -119,7 +121,7 @@ namespace Engine
             }
         }
 
-        internal void CreatePrimaryIndex(string tableName, Schema schema)
+        public void CreatePrimaryIndex(string tableName, Schema schema)
         {
             if (_primaryIndexMetadataPages.ContainsKey(tableName))
                 throw new InvalidDataException(Constants.InvalidFileError);
@@ -129,6 +131,7 @@ namespace Engine
                 Constants.DefaultBPlusTreeMaxKeys);
             _primaryIndexes.Add(tableName, index);
             _primaryIndexMetadataPages.Add(tableName, index.MetadataPageId);
+            BufferPool.Flush();
             WriteCatalog(schema);
             BufferPool.Flush();
         }

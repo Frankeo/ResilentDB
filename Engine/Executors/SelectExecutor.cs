@@ -6,7 +6,7 @@ public sealed class SelectExecutor : ExecutorBase
 {
     public override bool CanExecute(Statement statement) => statement is SelectStatement;
 
-    public override object Execute(DbEngine engine, Statement statement)
+    public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var stmt = (SelectStatement)statement;
 
@@ -17,21 +17,15 @@ public sealed class SelectExecutor : ExecutorBase
 
         var rows = FindMatchingRows(engine, stmt.TableName, table, stmt.Where);
 
-        if (stmt.Columns.Count == 1 && stmt.Columns[0] == "*")
-        {
-            return rows;
-        }
-
-        return rows
-            .Select(r =>
-            {
-                var newRow = new Row();
-                foreach (var col in stmt.Columns)
-                {
-                    newRow.Values[col] = r.Values[col];
-                }
-                return newRow;
-            })
+        var columns = stmt.Columns.Count == 1 && stmt.Columns[0] == "*"
+            ? table.Columns.Select(column => column.Name).ToList()
+            : stmt.Columns.ToList();
+        var resultRows = rows
+            .Select(row => (IReadOnlyList<object?>)columns
+                .Select(column => row.Values[column])
+                .ToArray())
             .ToList();
+
+        return new QueryResult(columns, resultRows);
     }
 }

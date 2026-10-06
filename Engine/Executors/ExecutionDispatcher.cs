@@ -13,7 +13,7 @@ public sealed class ExecutionDispatcher
         new UpdateExecutor()
     };
 
-    public object Execute(DbEngine engine, Statement statement)
+    public ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         foreach (var executor in _executors)
         {

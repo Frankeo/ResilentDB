@@ -1,11 +1,12 @@
 using System.Buffers.Binary;
 using System.Text;
+using Constants = Engine.BPlusTree.Constants;
 
 namespace Engine;
 
 public sealed partial class PagedPrimaryKeyBPlusTree
 {
-    private const int DefaultMetadataPageId = Constants.CatalogPageId;
+    private const int DefaultMetadataPageId = Constants.DefaultMetadataPageId;
     private const int NodeHeaderSize = 9;
     private const int LeafEntryHeaderSize = sizeof(long) + sizeof(byte) + sizeof(int);
     private const int LeafOverflowEntrySize = LeafEntryHeaderSize + sizeof(int);

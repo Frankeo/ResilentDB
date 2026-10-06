@@ -6,7 +6,7 @@ public sealed class CreateTableExecutor : ExecutorBase
 {
     public override bool CanExecute(Statement statement) => statement is CreateTableStatement;
 
-    public override object Execute(DbEngine engine, Statement statement)
+    public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var stmt = (CreateTableStatement)statement;
 
@@ -22,6 +22,6 @@ public sealed class CreateTableExecutor : ExecutorBase
         engine.Schema.Tables[stmt.TableName] = tableDef;
         engine.CreatePrimaryIndex(stmt.TableName);
         engine.Save();
-        return Constants.TableCreatedMessage;
+        return new CommandResult(0, Constants.TableCreatedMessage);
     }
 }
