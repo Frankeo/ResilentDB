@@ -9,15 +9,18 @@ public sealed partial class BPlusTree
         lock (_sync)
         {
             ThrowIfDisposed();
+            Trace("LookupStarted", $"key={key}, rootPage={_rootPageId}");
             int leafPageId = FindLeaf(key, new List<PathEntry>());
             var leaf = ReadLeaf(leafPageId);
             int index = LowerBound(leaf.Entries.Select(x => x.Key).ToList(), key);
             if (index < leaf.Entries.Count && leaf.Entries[index].Key == key)
             {
                 payload = leaf.Entries[index].Payload.ToArray();
+                Trace("LookupCompleted", $"key={key}, found=true, leafPage={leafPageId}, slot={index}, payloadBytes={payload.Length}");
                 return true;
             }
             payload = Array.Empty<byte>();
+            Trace("LookupCompleted", $"key={key}, found=false, leafPage={leafPageId}, insertionSlot={index}");
             return false;
         }
     }
@@ -28,11 +31,16 @@ public sealed partial class BPlusTree
         while (true)
         {
             byte[] page = _bufferPool.ReadPage(pageId);
-            if (page[0] == LeafPageType) return pageId;
+            if (page[0] == LeafPageType)
+            {
+                Trace("LeafSelected", $"key={key}, page={pageId}, depth={path.Count}", path.Count);
+                return pageId;
+            }
             if (page[0] != InternalPageType)
                 throw new InvalidDataException(Constants.InvalidFileError);
             var node = ReadInternal(page);
             int childIndex = UpperBound(node.Keys, key);
+            Trace("InternalNodeVisited", $"page={pageId}, separators=[{string.Join(",", node.Keys)}], key={key}, childIndex={childIndex}, childPage={node.Children[childIndex]}", path.Count);
             path.Add(new PathEntry(pageId, childIndex));
             pageId = node.Children[childIndex];
         }
@@ -57,6 +65,7 @@ public sealed partial class BPlusTree
         {
             ThrowIfDisposed();
             var result = new List<KeyValuePair<long, byte[]>>();
+            Trace("RangeScanStarted", $"minimum={minimum?.ToString() ?? "-inf"}, maximum={maximum?.ToString() ?? "+inf"}");
             int leafPageId = minimum.HasValue ? FindLeaf(minimum.Value, new List<PathEntry>()) : FindFirstLeaf();
             var visited = new HashSet<int>();
             while (PageIdIsValid(leafPageId))
@@ -66,11 +75,16 @@ public sealed partial class BPlusTree
                 foreach (var entry in leaf.Entries)
                 {
                     if (minimum.HasValue && entry.Key < minimum.Value) continue;
-                    if (maximum.HasValue && entry.Key > maximum.Value) return result;
+                    if (maximum.HasValue && entry.Key > maximum.Value)
+                    {
+                        Trace("RangeScanCompleted", $"rows={result.Count}, stoppedAtKey={entry.Key}, page={leafPageId}");
+                        return result;
+                    }
                     result.Add(new KeyValuePair<long, byte[]>(entry.Key, entry.Payload.ToArray()));
                 }
                 leafPageId = leaf.NextPageId;
             }
+            Trace("RangeScanCompleted", $"rows={result.Count}, reachedEnd=true");
             return result;
         }
     }

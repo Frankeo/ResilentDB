@@ -151,4 +151,41 @@ public sealed class EngineExecutionTests : EngineTestBase
         Assert.Throws<ObjectDisposedException>(() => engine.Save());
         Assert.Throws<ObjectDisposedException>(() => engine.Execute("SELECT * FROM users"));
     }
+
+    [Fact]
+    public void TraceSinkShowsFieldChangesAndBPlusTreeTraversal()
+    {
+        var traceSink = new RecordingTraceSink();
+        using var engine = new DbEngine(DatabasePath, traceSink);
+        engine.Execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+        for (int id = 1; id <= 40; id++)
+            engine.Execute($"INSERT INTO users VALUES ({id}, 'User {id}')");
+
+        engine.Execute("UPDATE users SET name = 'Updated' WHERE id = 35");
+        engine.Execute("SELECT * FROM users WHERE id = 35");
+        engine.Execute("DELETE FROM users WHERE id = 35");
+
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "Executor" && traceEvent.Operation == "FieldAdded");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "Executor" && traceEvent.Operation == "FieldUpdated");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "Executor" && traceEvent.Operation == "RowDelete" &&
+            traceEvent.Detail.Contains("name="));
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "BPlusTree" && traceEvent.Operation == "LeafSplit");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "BPlusTree" && traceEvent.Operation == "InternalNodeVisited");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "BPlusTree" && traceEvent.Operation == "LookupCompleted");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "BPlusTree" && traceEvent.Operation == "DeleteCompleted");
+    }
+
+    private sealed class RecordingTraceSink : IEngineTraceSink
+    {
+        public List<EngineTraceEvent> Events { get; } = new();
+
+        public void Write(EngineTraceEvent traceEvent) => Events.Add(traceEvent);
+    }
 }

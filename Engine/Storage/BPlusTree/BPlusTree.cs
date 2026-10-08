@@ -15,6 +15,7 @@ public readonly record struct PageId(int Value)
 public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
 {
     private readonly IBufferPool _bufferPool;
+    private readonly IEngineTraceSink? _traceSink;
     private int _maxKeys;
     private readonly int _metadataPageId;
     private readonly bool _ownsBufferPool;
@@ -25,16 +26,17 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
     private long _count;
     private bool _disposed;
 
-    public BPlusTree(string filePath, int maxKeys = Constants.DefaultMaxKeys, int bufferPoolCapacity = BufferPoolConstants.DefaultBufferPoolCapacity)
-        : this(new ClockBufferPool(filePath, bufferPoolCapacity), DefaultMetadataPageId, maxKeys, true, false)
+    public BPlusTree(string filePath, int maxKeys = Constants.DefaultMaxKeys, int bufferPoolCapacity = BufferPoolConstants.DefaultBufferPoolCapacity, IEngineTraceSink? traceSink = null)
+        : this(new ClockBufferPool(filePath, bufferPoolCapacity), DefaultMetadataPageId, maxKeys, true, false, traceSink)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
     }
 
-    private BPlusTree(IBufferPool bufferPool, int metadataPageId, int maxKeys, bool ownsBufferPool, bool initializeNew)
+    private BPlusTree(IBufferPool bufferPool, int metadataPageId, int maxKeys, bool ownsBufferPool, bool initializeNew, IEngineTraceSink? traceSink)
     {
         if (maxKeys < 3) throw new ArgumentOutOfRangeException(nameof(maxKeys));
         _bufferPool = bufferPool;
+        _traceSink = traceSink;
         _metadataPageId = metadataPageId;
         _ownsBufferPool = ownsBufferPool;
         _maxKeys = maxKeys;
@@ -52,12 +54,12 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
     }
 
     internal int MetadataPageId => _metadataPageId;
-    internal static BPlusTree CreateOnBufferPool(IBufferPool bufferPool, int maxKeys)
+    internal static BPlusTree CreateOnBufferPool(IBufferPool bufferPool, int maxKeys, IEngineTraceSink? traceSink = null)
     {
         int metadataPageId = bufferPool.AllocatePage();
-        return new BPlusTree(bufferPool, metadataPageId, maxKeys, false, true);
+        return new BPlusTree(bufferPool, metadataPageId, maxKeys, false, true, traceSink);
     }
-    internal static BPlusTree Open(IBufferPool bufferPool, int metadataPageId, int maxKeys) => new(bufferPool, metadataPageId, maxKeys, false, false);
+    internal static BPlusTree Open(IBufferPool bufferPool, int metadataPageId, int maxKeys, IEngineTraceSink? traceSink = null) => new(bufferPool, metadataPageId, maxKeys, false, false, traceSink);
 
     public long Count { get { lock (_sync) { ThrowIfDisposed(); return _count; } } }
     public PageId RootPageId { get { lock (_sync) { ThrowIfDisposed(); return new PageId(_rootPageId); } } }
@@ -95,12 +97,19 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
         lock (_sync)
         {
             ThrowIfDisposed();
+            Trace("UpdateStarted", $"key={key}, payloadBytes={payload.Length}");
             return ExecuteMutation(() =>
             {
                 var path = new List<PathEntry>(); int leafPageId = FindLeaf(key, path); var leaf = ReadLeaf(leafPageId); int index = LowerBound(leaf.Entries.Select(x => x.Key).ToList(), key);
-                if (index >= leaf.Entries.Count || leaf.Entries[index].Key != key) return false;
+                if (index >= leaf.Entries.Count || leaf.Entries[index].Key != key)
+                {
+                    Trace("UpdateNotFound", $"key={key}, leafPage={leafPageId}");
+                    return false;
+                }
                 FreeOverflowPages(leaf.Entries[index].OverflowHeadPageId); leaf.Entries[index] = new LeafEntry(key, payload); EnsureOverflowEntries(leaf);
-                if (RequiresSplit(leaf)) SplitLeaf(leafPageId, leaf, path); else WriteLeaf(leafPageId, leaf); WriteMetadata(); return true;
+                if (RequiresSplit(leaf)) SplitLeaf(leafPageId, leaf, path); else WriteLeaf(leafPageId, leaf); WriteMetadata();
+                Trace("UpdateCompleted", $"key={key}, leafPage={leafPageId}, payloadBytes={payload.Length}");
+                return true;
             });
         }
     }
@@ -110,12 +119,15 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
         lock (_sync)
         {
             ThrowIfDisposed();
+            Trace("InsertStarted", $"key={key}, payloadBytes={payload.Length}");
             ExecuteMutation(() =>
             {
                 var path = new List<PathEntry>(); int leafPageId = FindLeaf(key, path); var leaf = ReadLeaf(leafPageId); int index = LowerBound(leaf.Entries.Select(x => x.Key).ToList(), key);
                 if (index < leaf.Entries.Count && leaf.Entries[index].Key == key) throw new InvalidOperationException(Constants.DuplicatePrimaryKeyError);
+                Trace("LeafInsertPosition", $"page={leafPageId}, key={key}, index={index}, existingKeys=[{string.Join(",", leaf.Entries.Select(entry => entry.Key))}]");
                 leaf.Entries.Insert(index, new LeafEntry(key, payload)); EnsureOverflowEntries(leaf); if (RequiresSplit(leaf)) SplitLeaf(leafPageId, leaf, path); else WriteLeaf(leafPageId, leaf); _count++; WriteMetadata(); return true;
             });
+            Trace("InsertCompleted", $"key={key}, count={_count}, rootPage={_rootPageId}");
         }
     }
 
@@ -124,13 +136,18 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
         lock (_sync)
         {
             ThrowIfDisposed();
+            Trace("DeleteStarted", $"key={key}");
             return ExecuteMutation(() =>
             {
                 var path = new List<PathEntry>(); int leafPageId = FindLeaf(key, path); var leaf = ReadLeaf(leafPageId); int index = LowerBound(leaf.Entries.Select(x => x.Key).ToList(), key);
-                if (index >= leaf.Entries.Count || leaf.Entries[index].Key != key) return false;
+                if (index >= leaf.Entries.Count || leaf.Entries[index].Key != key)
+                {
+                    Trace("DeleteNotFound", $"key={key}, leafPage={leafPageId}");
+                    return false;
+                }
                 FreeOverflowPages(leaf.Entries[index].OverflowHeadPageId); leaf.Entries.RemoveAt(index);
                 if (leafPageId == _rootPageId) WriteLeaf(leafPageId, leaf); else if (leaf.Entries.Count >= MinimumLeafKeys) { WriteLeaf(leafPageId, leaf); if (leaf.Entries.Count > 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key); } else RebalanceLeaf(leafPageId, leaf, path);
-                _count--; WriteMetadata(); return true;
+                _count--; WriteMetadata(); Trace("DeleteCompleted", $"key={key}, count={_count}, rootPage={_rootPageId}"); return true;
             });
         }
     }
@@ -180,6 +197,7 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
     private void WriteTreePage(int pageId, byte[] pageData)
     {
         if (_activeMutation is { } mutation && !mutation.AllocatedPages.Contains(pageId) && !mutation.OriginalPages.ContainsKey(pageId)) mutation.OriginalPages.Add(pageId, _bufferPool.ReadPage(pageId).ToArray());
+        Trace("BufferPoolWrite", $"page={pageId}, bytes={pageData.Length}, pageType={pageData[0]}");
         _bufferPool.WritePage(pageId, pageData);
     }
 
@@ -189,12 +207,17 @@ public sealed partial class BPlusTree : IDisposable, IPrimaryKeyIndex
         if (_bufferPool.PageCount <= _metadataPageId) throw new InvalidDataException(Constants.InvalidFileError); byte[] page = _bufferPool.ReadPage(_metadataPageId);
         if (!page.AsSpan(0, Magic.Length).SequenceEqual(Magic) || ReadInt32(page, 4) != FormatVersion) throw new InvalidDataException(Constants.InvalidFileError);
         _rootPageId = ReadInt32(page, 8); _count = ReadInt64(page, 12); _maxKeys = ReadInt32(page, 20); _freePageHead = ReadInt32(page, 24);
+        Trace("MetadataRead", $"page={_metadataPageId}, root={_rootPageId}, count={_count}, maxKeys={_maxKeys}, freeHead={_freePageHead}");
         if (_maxKeys < 3 || _rootPageId <= _metadataPageId || _rootPageId >= _bufferPool.PageCount || _count < 0 || (_freePageHead != Constants.InvalidPageId && !PageIdIsValid(_freePageHead))) throw new InvalidDataException(Constants.InvalidFileError);
     }
     private void WriteMetadata()
     {
         byte[] page = new byte[_bufferPool.PageSize]; Magic.CopyTo(page, 0); WriteInt32(page, 4, FormatVersion); WriteInt32(page, 8, _rootPageId); WriteInt64(page, 12, _count); WriteInt32(page, 20, _maxKeys); WriteInt32(page, 24, _freePageHead); WriteTreePage(_metadataPageId, page);
+        Trace("MetadataWritten", $"page={_metadataPageId}, root={_rootPageId}, count={_count}, maxKeys={_maxKeys}, freeHead={_freePageHead}");
     }
+
+    private void Trace(string operation, string detail, int depth = 0) =>
+        _traceSink?.Write(new EngineTraceEvent("BPlusTree", operation, detail, depth));
     private static Row DeserializeRow(byte[] payload)
     {
         var row = JsonSerializer.Deserialize<Row>(payload) ?? throw new InvalidDataException(Constants.InvalidFileError);

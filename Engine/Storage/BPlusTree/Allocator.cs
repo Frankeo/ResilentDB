@@ -10,6 +10,7 @@ public sealed partial class BPlusTree
         {
             int id = _bufferPool.AllocatePage();
             _activeMutation?.AllocatedPages.Add(id);
+            Trace("TreePageAllocated", $"page={id}, source=Pager");
             return id;
         }
         int pageId = _freePageHead;
@@ -17,6 +18,7 @@ public sealed partial class BPlusTree
         if (page[0] != FreePageType) throw new InvalidDataException(Constants.InvalidFileError);
         _activeMutation?.OriginalPages.TryAdd(pageId, page.ToArray());
         _freePageHead = ReadInt32(page, 1);
+        Trace("TreePageAllocated", $"page={pageId}, source=free-list, nextFree={_freePageHead}");
         return pageId;
     }
 
@@ -29,6 +31,7 @@ public sealed partial class BPlusTree
         WriteInt32(page, 1, _freePageHead);
         WriteTreePage(pageId, page);
         _freePageHead = pageId;
+        Trace("TreePageFreed", $"page={pageId}, nextFree={ReadInt32(page, 1)}");
     }
 
     private void FreeOverflowPages(int firstPageId)

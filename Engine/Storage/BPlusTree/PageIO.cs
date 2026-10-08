@@ -7,6 +7,7 @@ public sealed partial class BPlusTree
     private void WriteLeaf(int pageId, LeafNode node)
     {
         EnsureOverflowEntries(node);
+        Trace("LeafPageWriteStarted", $"page={pageId}, keys=[{string.Join(",", node.Entries.Select(entry => entry.Key))}], next={node.NextPageId}");
         byte[] page = new byte[_bufferPool.PageSize];
         page[0] = LeafPageType;
         WriteInt32(page, 1, node.Entries.Count);
@@ -31,6 +32,7 @@ public sealed partial class BPlusTree
         }
         if (offset > page.Length) throw new InvalidOperationException(Constants.PageDataTooLargeError);
         WriteTreePage(pageId, page);
+        Trace("LeafPageWritten", $"page={pageId}, entries={node.Entries.Count}, encodedBytes={offset}");
     }
 
     private LeafNode ReadLeaf(int pageId)
@@ -64,6 +66,7 @@ public sealed partial class BPlusTree
             else throw new InvalidDataException(Constants.InvalidFileError);
         }
         EnsureSorted(leaf.Entries.Select(x => x.Key).ToList());
+        Trace("LeafPageRead", $"page={pageId}, keys=[{string.Join(",", leaf.Entries.Select(entry => entry.Key))}], next={leaf.NextPageId}, payloadKinds=[{string.Join(",", leaf.Entries.Select(entry => entry.OverflowHeadPageId > 0 ? "overflow" : "inline"))}]");
         return leaf;
     }
 
@@ -81,6 +84,7 @@ public sealed partial class BPlusTree
     {
         int chunk = _bufferPool.PageSize - NodeHeaderSize;
         int count = (payload.Length + chunk - 1) / chunk;
+        Trace("OverflowWriteStarted", $"payloadBytes={payload.Length}, pages={count}, bytesPerPage={chunk}");
         var ids = new int[count];
         for (int i = 0; i < count; i++) ids[i] = AllocateTreePage();
         int offset = 0;
@@ -93,8 +97,10 @@ public sealed partial class BPlusTree
             WriteInt32(page, 5, bytes);
             payload.AsSpan(offset, bytes).CopyTo(page.AsSpan(NodeHeaderSize));
             WriteTreePage(ids[i], page);
+            Trace("OverflowPageWritten", $"page={ids[i]}, next={(i + 1 < count ? ids[i + 1] : Constants.InvalidPageId)}, bytes={bytes}", i + 1);
             offset += bytes;
         }
+        Trace("OverflowWriteCompleted", $"headPage={ids[0]}, pages={count}");
         return ids[0];
     }
 
@@ -114,6 +120,7 @@ public sealed partial class BPlusTree
                 throw new InvalidDataException(Constants.InvalidFileError);
             page.AsSpan(NodeHeaderSize, bytes).CopyTo(payload.AsSpan(copied));
             copied += bytes;
+            Trace("OverflowPageRead", $"page={pageId}, bytes={bytes}, copied={copied}/{length}");
             pageId = next;
         }
         if (pageId != Constants.InvalidPageId) throw new InvalidDataException(Constants.InvalidFileError);
@@ -134,6 +141,7 @@ public sealed partial class BPlusTree
             offset += InternalEntrySize;
         }
         WriteTreePage(pageId, page);
+        Trace("InternalPageWritten", $"page={pageId}, separators=[{string.Join(",", node.Keys)}], children=[{string.Join(",", node.Children)}]");
     }
 
     private InternalNode ReadInternal(byte[] page)

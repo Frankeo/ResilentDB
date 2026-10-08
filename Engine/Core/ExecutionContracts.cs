@@ -3,10 +3,22 @@ namespace Engine;
 public interface IExecutionContext
 {
     Schema Schema { get; }
+    IEngineTraceSink? TraceSink => null;
     void Save();
     IPrimaryKeyIndex OpenPrimaryIndex(string tableName);
     void CreatePrimaryIndex(string tableName);
 }
+
+public interface IEngineTraceSink
+{
+    void Write(EngineTraceEvent traceEvent);
+}
+
+public sealed record EngineTraceEvent(
+    string Component,
+    string Operation,
+    string Detail,
+    int Depth = 0);
 
 public interface IPrimaryKeyIndex
 {

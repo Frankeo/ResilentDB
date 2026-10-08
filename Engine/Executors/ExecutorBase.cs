@@ -21,6 +21,21 @@ public abstract class ExecutorBase : IExecutor
                 string.Format(Constants.UnsupportedOperatorError, where.Op));
     }
 
+    protected static void Trace(
+        IExecutionContext engine,
+        string operation,
+        string detail,
+        int depth = 0) =>
+        engine.TraceSink?.Write(new EngineTraceEvent("Executor", operation, detail, depth));
+
+    protected static string FormatWhere(WhereClause? where) => where is null
+        ? "<none>"
+        : $"{where.Column} {where.Op} {FormatValue(where.Value)}";
+
+    protected static string FormatValue(object? value) => value is null
+        ? "NULL"
+        : System.Text.Json.JsonSerializer.Serialize(value);
+
     protected static List<Row> FindMatchingRows(
         IExecutionContext engine,
         string tableName,
@@ -29,7 +44,10 @@ public abstract class ExecutorBase : IExecutor
     {
         var index = engine.OpenPrimaryIndex(tableName);
         if (where is null)
+        {
+            Trace(engine, "AccessPlan", $"table={tableName}, full index scan");
             return index.ScanRecords().Select(entry => entry.Value).ToList();
+        }
 
         var primaryKey = table.Columns.SingleOrDefault(column => column.IsPrimaryKey);
         if (primaryKey is not null &&
@@ -40,6 +58,7 @@ public abstract class ExecutorBase : IExecutor
 
             if (where.Op == "=")
             {
+                Trace(engine, "AccessPlan", $"table={tableName}, primary-key point lookup key={key}");
                 return index.TryGetRecord(key, out var row) && row is not null
                     ? new List<Row> { row }
                     : new List<Row>();
@@ -67,11 +86,13 @@ public abstract class ExecutorBase : IExecutor
                     break;
             }
 
+            Trace(engine, "AccessPlan", $"table={tableName}, primary-key range scan min={minimum?.ToString() ?? "-inf"}, max={maximum?.ToString() ?? "+inf"}");
             return index.ScanRecords(minimum, maximum)
                 .Select(entry => entry.Value)
                 .ToList();
         }
 
+        Trace(engine, "AccessPlan", $"table={tableName}, full index scan then filter {FormatWhere(where)}");
         return index.ScanRecords()
             .Select(entry => entry.Value)
             .Where(row => MatchesWhere(row, where))

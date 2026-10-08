@@ -9,6 +9,7 @@ public sealed class SelectExecutor : ExecutorBase
     public override ExecutionResult Execute(IExecutionContext engine, Statement statement)
     {
         var stmt = (SelectStatement)statement;
+        Trace(engine, "SelectStarted", $"table={stmt.TableName}, columns={string.Join(",", stmt.Columns)}, where={FormatWhere(stmt.Where)}");
 
         if (!engine.Schema.Tables.TryGetValue(stmt.TableName, out var table))
             throw new Exception(string.Format(Constants.TableNotFoundError, stmt.TableName));
@@ -16,6 +17,7 @@ public sealed class SelectExecutor : ExecutorBase
         ValidateWhereClause(table, stmt.Where);
 
         var rows = FindMatchingRows(engine, stmt.TableName, table, stmt.Where);
+        Trace(engine, "RowsRead", $"count={rows.Count}");
 
         var columns = stmt.Columns.Count == 1 && stmt.Columns[0] == "*"
             ? table.Columns.Select(column => column.Name).ToList()
@@ -26,6 +28,7 @@ public sealed class SelectExecutor : ExecutorBase
                 .ToArray())
             .ToList();
 
+        Trace(engine, "ProjectionApplied", $"columns={string.Join(",", columns)}, rows={resultRows.Count}");
         return new QueryResult(columns, resultRows);
     }
 }

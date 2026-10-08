@@ -15,6 +15,7 @@ public sealed partial class BPlusTree
         leaf.Entries.RemoveRange(middle, leaf.Entries.Count - middle);
         int rightPageId = AllocateTreePage();
         leaf.NextPageId = rightPageId;
+        Trace("LeafSplit", $"leftPage={leafPageId}, rightPage={rightPageId}, separator={right.Entries[0].Key}, leftKeys=[{string.Join(",", leaf.Entries.Select(entry => entry.Key))}], rightKeys=[{string.Join(",", right.Entries.Select(entry => entry.Key))}]");
         WriteLeaf(leafPageId, leaf);
         WriteLeaf(rightPageId, right);
         InsertIntoParent(leafPageId, right.Entries[0].Key, rightPageId, path);
@@ -31,7 +32,12 @@ public sealed partial class BPlusTree
             int d = Math.Abs(left - right);
             if (d < difference) { best = i; difference = d; }
         }
-        if (best < 0) throw new InvalidOperationException(Constants.PageDataTooLargeError);
+        if (best < 0)
+        {
+            Trace("LeafSplitFailed", $"entries={leaf.Entries.Count}, minimumPerSide={MinimumLeafKeys}, encodedBytes={total}, pageCapacity={capacity}");
+            throw new InvalidOperationException(Constants.PageDataTooLargeError);
+        }
+        Trace("LeafSplitPointChosen", $"index={best}, leftEntries={best}, rightEntries={leaf.Entries.Count - best}, totalBytes={total}, difference={difference}");
         return best;
     }
 
@@ -44,7 +50,11 @@ public sealed partial class BPlusTree
             var parent = ReadInternal(_bufferPool.ReadPage(parentPath.PageId));
             parent.Keys.Insert(parentPath.ChildIndex, separator);
             parent.Children.Insert(parentPath.ChildIndex + 1, rightPageId);
-            if (parent.Keys.Count <= _maxKeys) { WriteInternal(parentPath.PageId, parent); return; }
+            if (parent.Keys.Count <= _maxKeys)
+            {
+                Trace("SeparatorInserted", $"parentPage={parentPath.PageId}, separator={separator}, children=[{string.Join(",", parent.Children)}]");
+                WriteInternal(parentPath.PageId, parent); return;
+            }
             int middle = parent.Keys.Count / 2;
             long promoted = parent.Keys[middle];
             var right = new InternalNode();
@@ -53,6 +63,7 @@ public sealed partial class BPlusTree
             parent.Keys.RemoveRange(middle, parent.Keys.Count - middle);
             parent.Children.RemoveRange(middle + 1, parent.Children.Count - middle - 1);
             int rightId = AllocateTreePage();
+            Trace("InternalNodeSplit", $"leftPage={parentPath.PageId}, rightPage={rightId}, promoted={promoted}");
             WriteInternal(parentPath.PageId, parent);
             WriteInternal(rightId, right);
             leftPageId = parentPath.PageId;
@@ -104,20 +115,20 @@ public sealed partial class BPlusTree
         if (index > 0)
         {
             int leftId = parent.Children[index - 1]; var left = ReadLeaf(leftId);
-            if (left.Entries.Count > MinimumLeafKeys) { leaf.Entries.Insert(0, left.Entries[^1]); left.Entries.RemoveAt(left.Entries.Count - 1); parent.Keys[index - 1] = leaf.Entries[0].Key; WriteLeaf(leftId, left); WriteLeaf(leafPageId, leaf); WriteInternal(parentPath.PageId, parent); return; }
+            if (left.Entries.Count > MinimumLeafKeys) { Trace("LeafRedistribution", $"fromPage={leftId}, toPage={leafPageId}, key={left.Entries[^1].Key}"); leaf.Entries.Insert(0, left.Entries[^1]); left.Entries.RemoveAt(left.Entries.Count - 1); parent.Keys[index - 1] = leaf.Entries[0].Key; WriteLeaf(leftId, left); WriteLeaf(leafPageId, leaf); WriteInternal(parentPath.PageId, parent); return; }
         }
         if (index + 1 < parent.Children.Count)
         {
             int rightId = parent.Children[index + 1]; var right = ReadLeaf(rightId);
-            if (right.Entries.Count > MinimumLeafKeys) { leaf.Entries.Add(right.Entries[0]); right.Entries.RemoveAt(0); parent.Keys[index] = right.Entries[0].Key; WriteLeaf(leafPageId, leaf); WriteLeaf(rightId, right); WriteInternal(parentPath.PageId, parent); if (index == 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key); return; }
+            if (right.Entries.Count > MinimumLeafKeys) { Trace("LeafRedistribution", $"fromPage={rightId}, toPage={leafPageId}, key={right.Entries[0].Key}"); leaf.Entries.Add(right.Entries[0]); right.Entries.RemoveAt(0); parent.Keys[index] = right.Entries[0].Key; WriteLeaf(leafPageId, leaf); WriteLeaf(rightId, right); WriteInternal(parentPath.PageId, parent); if (index == 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key); return; }
         }
         if (index > 0)
         {
-            int leftId = parent.Children[index - 1]; var left = ReadLeaf(leftId); left.Entries.AddRange(leaf.Entries); left.NextPageId = leaf.NextPageId; WriteLeaf(leftId, left); FreeTreePage(leafPageId); parent.Children.RemoveAt(index); parent.Keys.RemoveAt(index - 1);
+            int leftId = parent.Children[index - 1]; var left = ReadLeaf(leftId); Trace("LeafMerge", $"leftPage={leftId}, removedPage={leafPageId}, combinedEntries={left.Entries.Count + leaf.Entries.Count}"); left.Entries.AddRange(leaf.Entries); left.NextPageId = leaf.NextPageId; WriteLeaf(leftId, left); FreeTreePage(leafPageId); parent.Children.RemoveAt(index); parent.Keys.RemoveAt(index - 1);
         }
         else
         {
-            int rightId = parent.Children[index + 1]; var right = ReadLeaf(rightId); leaf.Entries.AddRange(right.Entries); leaf.NextPageId = right.NextPageId; WriteLeaf(leafPageId, leaf); FreeTreePage(rightId); parent.Children.RemoveAt(index + 1); parent.Keys.RemoveAt(index);
+            int rightId = parent.Children[index + 1]; var right = ReadLeaf(rightId); Trace("LeafMerge", $"leftPage={leafPageId}, removedPage={rightId}, combinedEntries={leaf.Entries.Count + right.Entries.Count}"); leaf.Entries.AddRange(right.Entries); leaf.NextPageId = right.NextPageId; WriteLeaf(leafPageId, leaf); FreeTreePage(rightId); parent.Children.RemoveAt(index + 1); parent.Keys.RemoveAt(index);
             if (index == 0) UpdateAncestorMinimum(path, leaf.Entries[0].Key);
         }
         RebalanceInternal(parentPath.PageId, parent, path);

@@ -11,6 +11,7 @@ namespace Engine
     {
         private static readonly byte[] CatalogMagic = Encoding.ASCII.GetBytes("RDC4");
         private readonly string _filePath;
+        private readonly IEngineTraceSink? _traceSink;
         private Dictionary<string, int> _primaryIndexMetadataPages = new();
         private readonly Dictionary<string, BPlusTree> _primaryIndexes =
             new(StringComparer.OrdinalIgnoreCase);
@@ -26,9 +27,10 @@ namespace Engine
             }
         }
 
-        public Storage(string filePath)
+        public Storage(string filePath, IEngineTraceSink? traceSink = null)
         {
             _filePath = filePath;
+            _traceSink = traceSink;
         }
 
         public bool Exists
@@ -88,9 +90,11 @@ namespace Engine
 
         public void Save(Schema schema)
         {
+            Trace("SaveStarted", $"tables={schema.Tables.Count}");
             BufferPool.Flush();
             WriteCatalog(schema);
             BufferPool.Flush();
+            Trace("SaveCompleted", $"pages={BufferPool.PageCount}");
         }
 
         public BPlusTree OpenPrimaryIndex(string tableName)
@@ -104,8 +108,10 @@ namespace Engine
             index = BPlusTree.Open(
                 BufferPool,
                 metadataPageId,
-                Constants.DefaultBPlusTreeMaxKeys);
+                Constants.DefaultBPlusTreeMaxKeys,
+                _traceSink);
             _primaryIndexes.Add(tableName, index);
+            Trace("PrimaryIndexOpened", $"table={tableName}, metadataPage={metadataPageId}");
             return index;
         }
 
@@ -128,12 +134,14 @@ namespace Engine
 
             var index = BPlusTree.CreateOnBufferPool(
                 BufferPool,
-                Constants.DefaultBPlusTreeMaxKeys);
+                Constants.DefaultBPlusTreeMaxKeys,
+                _traceSink);
             _primaryIndexes.Add(tableName, index);
             _primaryIndexMetadataPages.Add(tableName, index.MetadataPageId);
             BufferPool.Flush();
             WriteCatalog(schema);
             BufferPool.Flush();
+            Trace("PrimaryIndexCreated", $"table={tableName}, metadataPage={index.MetadataPageId}");
         }
 
         public void Dispose()
@@ -172,6 +180,9 @@ namespace Engine
             payload.CopyTo(page, 8);
             BufferPool.WritePage(Constants.CatalogPageId, page);
         }
+
+        private void Trace(string operation, string detail) =>
+            _traceSink?.Write(new EngineTraceEvent("Storage", operation, detail));
 
         private sealed class StorageCatalog
         {

@@ -51,6 +51,7 @@ Para profundizar en una parte concreta, cada proyecto tiene una guía propia:
 - [Contratos y modelos compartidos](Engine/Core/README.md): AST, resultados tipados e interfaces entre módulos.
 - [Fachada del motor](Engine/README.md): ciclo de vida y coordinación de los proyectos.
 - [CLI](Cli/README.md): interacción, comandos y presentación de resultados.
+- [Diagnostics](Diagnostics/README.md): traza detallada desde SQL hasta las operaciones internas del B+ tree.
 - [Tests](UnitTests/README.md): cobertura y ejecución de la suite.
 - [Benchmark](Benchmarks/README.md): metodología y comparación de políticas de caché.
 
@@ -92,6 +93,7 @@ Se requiere .NET 10 SDK.
 dotnet build Engine/Engine.csproj
 dotnet test UnitTests/UnitTests.csproj
 dotnet run --project Cli/Cli.csproj
+dotnet run --project Diagnostics/Diagnostics.csproj -- /tmp/demo.mdb assets/file.sql
 dotnet run --project Benchmarks/Benchmarks.csproj
 ```
 
