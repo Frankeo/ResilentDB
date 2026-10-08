@@ -85,17 +85,72 @@ El ejemplo ilustra la idea, no una secuencia fija de páginas: el hermano elegid
 
 ## Formato de página
 
-Los números enteros se codifican little-endian. Cada árbol tiene una metadata page con magic `RDBI`, versión 4, root page ID, cantidad de claves, `maxKeys` y cabeza de la free list. En uso independiente el metadata ID por defecto es 1; `Storage` asigna un ID distinto a cada índice dentro del archivo compartido.
+## Formato del archivo, páginas y entradas
 
-Las páginas de árbol empiezan con un byte de tipo y un contador de entradas; el encabezado ocupa 9 bytes. Una hoja añade su `NextPageId`. Cada entrada de hoja contiene:
+El archivo es una secuencia de páginas de tamaño fijo (4096 bytes por defecto). Todos los enteros se codifican little-endian. La página 0 es la cabecera física del archivo y no se usa como página de datos:
+
+| Offset | Tamaño | Campo | Valor / significado |
+| --- | ---: | --- | --- |
+| 0 | 4 bytes | Magic | `RDBP` |
+| 4 | 4 bytes | Versión | `4` |
+| 8 | 4 bytes | Tamaño de página | `4096` por defecto |
+| 12 | 4 bytes | Cantidad de páginas | Incluye la página 0 |
+
+El offset físico de una página `n` es `n * PageSize`. En una base creada por `Storage`, la página 1 es el catálogo: `RDC4` (4 bytes), longitud del JSON (4 bytes) y JSON UTF-8 con el esquema y el mapa de tabla a página metadata del índice primario. Las páginas de datos comienzan en el ID 2.
+
+Cada índice B+ tree tiene una página metadata propia. Esta empieza con `RDBI` y contiene:
+
+| Offset | Tamaño | Campo |
+| --- | ---: | --- |
+| 0 | 4 bytes | Magic `RDBI` |
+| 4 | 4 bytes | Versión del formato (`4`) |
+| 8 | 4 bytes | ID de la página raíz |
+| 12 | 8 bytes | Cantidad de claves/filas |
+| 20 | 4 bytes | `maxKeys` |
+| 24 | 4 bytes | ID de la primera página libre, o `-1` |
+
+Las páginas de nodos usan un encabezado de 9 bytes: tipo en el offset 0 y cantidad de entradas en los offsets 1-4. En una hoja, los offsets 5-8 contienen el ID de la siguiente hoja (`-1` si no hay otra). Los tipos son `1` para hoja, `2` para nodo interno, `3` para overflow y `4` para página libre.
+
+Cada entrada de hoja tiene esta forma:
 
 ```text
-key: 8 bytes | kind: 1 byte | payload length: 4 bytes | value
+clave: 8 bytes | kind: 1 byte | longitud del payload: 4 bytes | valor
 ```
 
-Con `kind = 0`, `value` son los bytes inline del payload. Con `kind = 1`, `value` es el ID de la primera overflow page. Los nodos internos almacenan su primer hijo y luego pares `(separator, child)`; así `Children.Count == Keys.Count + 1`.
+`kind = 0`: el valor son directamente los bytes del payload. `kind = 1`: el valor de 4 bytes es el ID de la primera página overflow, y la longitud sigue indicando el tamaño total del payload. Las filas se serializan como JSON UTF-8. En un nodo interno se guarda primero el ID del hijo izquierdo y luego pares `(separador: 8 bytes, hijo derecho: 4 bytes)`; cada separador es la clave mínima del hijo derecho.
 
-Las filas se serializan como JSON UTF-8 antes de guardarse. Es legible y evoluciona con el modelo, a cambio de más espacio y CPU que un formato binario específico.
+## Ejemplo: buscar una fila por clave primaria
+
+Supongamos una tabla `users` con tres filas, insertadas en este orden:
+
+```sql
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+INSERT INTO users VALUES (10, 'Ana');
+INSERT INTO users VALUES (20, 'Luis');
+INSERT INTO users VALUES (30, 'Eva');
+SELECT * FROM users WHERE id = 20;
+```
+
+Como solo hay tres claves, caben en una hoja (con el `maxKeys` predeterminado de 32). De forma esquemática, las páginas de un archivo nuevo quedan así:
+
+```text
+Página 0: cabecera RDBP
+Página 1: catálogo RDC4 -> users usa la metadata del índice de página 2
+Página 2: metadata RDBI -> rootPageId = 3, count = 3
+Página 3: hoja -> (10, payload Ana) | (20, payload Luis) | (30, payload Eva)
+```
+
+El contenido de cada entrada de la hoja se interpreta así:
+
+```text
+(10 | kind=0 | longitud JSON | JSON de la fila Ana)
+(20 | kind=0 | longitud JSON | JSON de la fila Luis)
+(30 | kind=0 | longitud JSON | JSON de la fila Eva)
+```
+
+Al ejecutar `SELECT ... WHERE id = 20`, el motor usa el índice de la clave primaria. El B+ tree lee la metadata para obtener la raíz, carga la hoja y busca `20` entre sus claves ordenadas; al encontrarla, toma su payload y lo deserializa como fila. En este árbol pequeño la raíz ya es hoja, así que no hay que pasar por nodos internos ni revisar las otras filas de la tabla. Con más datos puede haber nodos internos: cada separador dirige la búsqueda al hijo que puede contener la clave. Las páginas se leen mediante el buffer pool y el Pager.
+
+Los IDs `2` y `3` ilustran la asignación al crear una única tabla e índice en un archivo nuevo; otras asignaciones (por ejemplo, varios índices) pueden producir IDs distintos.
 
 ## Overflow pages y reutilización
 
