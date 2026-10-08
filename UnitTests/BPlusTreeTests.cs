@@ -85,6 +85,44 @@ public sealed class BPlusTreeTests : EngineTestBase
     }
 
     [Fact]
+    public void StoresManyMediumRowsWithoutExhaustingLeafPage()
+    {
+        var indexPath = $"{DatabasePath}.medium-rows.idx";
+        try
+        {
+            using (var tree = new BPlusTree(indexPath, maxKeys: 32, bufferPoolCapacity: 2))
+            {
+                for (long id = 1; id <= 30; id++)
+                {
+                    tree.InsertRecord(id, new Row
+                    {
+                        Values = new Dictionary<string, object>
+                        {
+                            ["id"] = id,
+                            ["message"] = $"Pager test event {id:D3}: {new string('x', 180)}"
+                        }
+                    });
+                }
+
+                tree.Validate();
+                Assert.Equal(30, tree.Count);
+                Assert.True(tree.TryGetRecord(25, out var row));
+                Assert.EndsWith(new string('x', 180), row!.Values["message"].ToString());
+            }
+
+            using var reloaded = new BPlusTree(indexPath, maxKeys: 32, bufferPoolCapacity: 2);
+            reloaded.Validate();
+            Assert.Equal(30, reloaded.Count);
+            Assert.True(reloaded.TryGetRecord(30, out _));
+        }
+        finally
+        {
+            if (File.Exists(indexPath))
+                File.Delete(indexPath);
+        }
+    }
+
+    [Fact]
     public void RebalancesAndReusesFreedPages()
     {
         var indexPath = $"{DatabasePath}.rebalance.idx";

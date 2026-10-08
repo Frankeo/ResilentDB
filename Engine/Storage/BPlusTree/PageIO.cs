@@ -69,7 +69,9 @@ public sealed partial class BPlusTree
 
     private void EnsureOverflowEntries(LeafNode leaf)
     {
-        int limit = (_bufferPool.PageSize - NodeHeaderSize - LeafEntryHeaderSize) / 2;
+        int minimumSplitEntries = 2 * MinimumLeafKeys;
+        int limit = Math.Max(0,
+            (_bufferPool.PageSize - NodeHeaderSize) / minimumSplitEntries - LeafEntryHeaderSize);
         foreach (var entry in leaf.Entries)
             if (entry.OverflowHeadPageId <= 0 && entry.Payload.Length > limit)
                 entry.OverflowHeadPageId = WriteOverflowPayload(entry.Payload);
