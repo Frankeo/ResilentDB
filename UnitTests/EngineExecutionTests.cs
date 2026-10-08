@@ -168,6 +168,10 @@ public sealed class EngineExecutionTests : EngineTestBase
         Assert.Contains(traceSink.Events, traceEvent =>
             traceEvent.Component == "Executor" && traceEvent.Operation == "FieldAdded");
         Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "Executor" && traceEvent.Operation == "CreateTableStarted");
+        Assert.Contains(traceSink.Events, traceEvent =>
+            traceEvent.Component == "Executor" && traceEvent.Operation == "ColumnDefined");
+        Assert.Contains(traceSink.Events, traceEvent =>
             traceEvent.Component == "Executor" && traceEvent.Operation == "FieldUpdated");
         Assert.Contains(traceSink.Events, traceEvent =>
             traceEvent.Component == "Executor" && traceEvent.Operation == "RowDelete" &&
